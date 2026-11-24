@@ -1,0 +1,3902 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>MapFinAnimation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS per lettura fogli Excel (.xlsx, .xls, .csv) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- PDF.js per estrazione testo da file PDF (.pdf) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+    /* Identità visiva ad alto contrasto: testi neri (#000000) su superfici chiare */
+    * {
+      box-sizing: border-box;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #000000;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: #dcebf7;
+      color: #000000;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    input, textarea, select {
+      color: #000000 !important;
+      background-color: #ffffff;
+      user-select: text;
+    }
+
+    input::placeholder, textarea::placeholder {
+      color: rgba(0, 0, 0, 0.56) !important;
+    }
+
+    #appRoot {
+      position: relative;
+      width: 100vw;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: #dcebf7;
+    }
+
+    #mapCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    #mapCanvas.dragging {
+      cursor: grabbing;
+    }
+
+    #mapCanvas.pick-mode {
+      cursor: crosshair;
+    }
+
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .thin-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .thin-scroll::-webkit-scrollbar-track {
+      background: #f8fafc;
+    }
+    .thin-scroll::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 9999px;
+    }
+
+    input[type="range"].tb-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
+      cursor: pointer;
+    }
+    input[type="range"].tb-slider::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 9999px;
+      background: rgba(0, 0, 0, 0.24);
+    }
+    input[type="range"].tb-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 9999px;
+      background: #ff3b5c;
+      border: 2.5px solid #000000;
+      margin-top: -5px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+      transition: transform 0.14s ease;
+    }
+    input[type="range"].tb-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+    }
+
+    @keyframes recPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.85); }
+    }
+    .rec-dot {
+      animation: recPulse 1.1s infinite ease-in-out;
+    }
+
+    @keyframes photoReveal {
+      from { opacity: 0; transform: scale(1.02); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .photo-reveal {
+      animation: photoReveal 0.28s ease-out forwards;
+    }
+
+    .safe-top {
+      padding-top: max(0.5rem, env(safe-area-inset-top));
+    }
+    .safe-bottom {
+      padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+    }
+  </style>
+</head>
+<body class="bg-[#dcebf7] text-black">
+  <div id="appRoot">
+    <!-- Canvas mappa Web Mercator interattivo a schermo intero -->
+    <canvas id="mapCanvas"></canvas>
+
+    <!-- Pulsante rapido per uscire dalla modalità Solo Mappa -->
+    <button id="exitCleanModeBtn" type="button"
+      class="hidden fixed top-3 left-3 z-40 px-3.5 py-2 rounded-full bg-white hover:bg-[#f1f5f9] border border-black/30 text-black text-xs font-extrabold shadow-xl flex items-center gap-2 transition cursor-pointer">
+      <span>👁️</span>
+      <span>Mostra Controlli</span>
+    </button>
+
+    <!-- OVERLAY FOTO A SCHERMO PIENO ALL'ARRIVO SULLA TAPPA (1, 2 o 3 foto) -->
+    <div id="arrivalPhotoOverlay"
+      class="hidden fixed inset-0 z-50 bg-[#f8fafc]/98 backdrop-blur-xl flex flex-col justify-between p-3 sm:p-6 safe-top safe-bottom text-black">
+      <div class="flex items-center justify-between gap-3 bg-white border border-black/25 rounded-2xl px-4 py-2.5 shadow-lg">
+        <div class="min-w-0">
+          <div class="text-[10px] font-black uppercase tracking-wider text-black">
+            📍 Arrivo alla tappa · <span id="photoOverlayItineraryTitle">MapFinAnimation</span>
+          </div>
+          <h3 id="photoOverlayStopName" class="text-sm sm:text-lg font-black text-black truncate">Firenze</h3>
+          <p id="photoOverlayCaption" class="text-xs font-medium text-black truncate"></p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span id="photoOverlayCounter" class="px-2.5 py-1 rounded-full bg-[#f1f5f9] text-[11px] font-extrabold text-black border border-black/25">
+            1 / 1
+          </span>
+          <button id="resumeFromPhotoBtn" type="button"
+            class="px-3.5 py-2 rounded-xl bg-rose-300 hover:bg-rose-400 active:scale-95 text-black text-xs font-black border border-black/30 shadow-sm transition cursor-pointer">
+            Prosegui mappa ▶
+          </button>
+        </div>
+      </div>
+
+      <div id="photoOverlayStage" class="photo-reveal flex-1 my-3 min-h-0 grid gap-3"></div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 bg-white border border-black/25 rounded-2xl px-4 py-2.5 shadow-lg">
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="prevPhotoSlideBtn" type="button"
+            class="px-3 py-1.5 rounded-xl bg-white hover:bg-[#f1f5f9] border border-black/25 text-xs font-extrabold text-black transition cursor-pointer">
+            ← Prec
+          </button>
+          <button id="nextPhotoSlideBtn" type="button"
+            class="px-3 py-1.5 rounded-xl bg-white hover:bg-[#f1f5f9] border border-black/25 text-xs font-extrabold text-black transition cursor-pointer">
+            Succ →
+          </button>
+          <button id="togglePhotoPauseBtn" type="button"
+            class="px-3 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 border border-black/25 text-black text-xs font-extrabold transition cursor-pointer">
+            ⏸ Pausa slide
+          </button>
+          <label class="flex items-center gap-1.5 text-xs font-bold text-black ml-1 cursor-pointer">
+            <input id="photoAutoAdvanceToggle" type="checkbox" checked class="rounded accent-rose-500 cursor-pointer" />
+            <span>Auto-ripartenza</span>
+          </label>
+        </div>
+        <div class="flex items-center gap-2 text-[11px] text-black font-bold">
+          <span id="photoAutoCountdown">Ripresa automatica attiva</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- BARRA SUPERIORE COMPATTA E SCORREVOLE -->
+    <header id="topBar"
+      class="fixed top-0 left-0 right-0 z-30 px-2.5 sm:px-3 safe-top flex flex-col gap-1.5 pointer-events-none">
+
+      <div class="pointer-events-auto w-full flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar px-2.5 py-1.5 rounded-2xl bg-white/95 backdrop-blur-md border border-black/25 shadow-lg">
+
+        <div class="flex items-center gap-1.5 shrink-0">
+          <div class="flex items-center gap-1.5 pr-2 border-r border-black/20">
+            <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-tr from-rose-300 via-orange-200 to-amber-200 border border-black/30 flex items-center justify-center shrink-0">
+              <svg class="w-4 h-4 text-black" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L19 21l-7-4-7 4 7-19z"></path>
+              </svg>
+            </div>
+            <span class="text-xs sm:text-sm font-black tracking-tight text-black">MapFinAnimation</span>
+          </div>
+
+          <button id="playPauseBtn" type="button"
+            class="min-h-[34px] px-2.5 sm:px-3 py-1 rounded-xl bg-rose-300 hover:bg-rose-400 active:scale-95 text-black text-xs font-black border border-black/30 flex items-center gap-1.5 transition cursor-pointer shrink-0"
+            title="Avvia o metti in pausa l'animazione">
+            <span id="playPauseIcon">⏸</span>
+            <span id="playPauseText">Pausa</span>
+          </button>
+
+          <button id="restartBtn" type="button"
+            class="min-h-[34px] w-8 rounded-xl bg-white hover:bg-[#f1f5f9] active:scale-95 text-black text-xs font-black border border-black/25 flex items-center justify-center transition cursor-pointer shrink-0"
+            title="Ricomincia dall'inizio">
+            ↺
+          </button>
+
+          <div class="flex items-center bg-[#f1f5f9] rounded-xl p-0.5 border border-black/20 shrink-0" title="Velocità riproduzione">
+            <button type="button" data-speed="0.5" class="speed-btn px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-extrabold text-black hover:bg-white transition cursor-pointer">0.5x</button>
+            <button type="button" data-speed="1" class="speed-btn px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-extrabold bg-amber-200 text-black border border-black/25 transition cursor-pointer">1x</button>
+            <button type="button" data-speed="1.5" class="speed-btn px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-extrabold text-black hover:bg-white transition cursor-pointer">1.5x</button>
+            <button type="button" data-speed="2" class="speed-btn px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-extrabold text-black hover:bg-white transition cursor-pointer">2x</button>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 shrink-0">
+          <div class="flex items-center bg-[#f1f5f9] rounded-xl p-0.5 border border-black/20 shrink-0" title="Formato inquadratura">
+            <button type="button" data-aspect="full" class="aspect-btn px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-extrabold bg-amber-200 text-black border border-black/25 transition cursor-pointer">Full</button>
+            <button type="button" data-aspect="9:16" class="aspect-btn px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-extrabold text-black hover:bg-white transition cursor-pointer">9:16</button>
+            <button type="button" data-aspect="16:9" class="aspect-btn px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-extrabold text-black hover:bg-white transition cursor-pointer">16:9</button>
+          </div>
+
+          <select id="mapThemeSelect" aria-label="Tema mappa"
+            class="min-h-[34px] px-2 py-1 rounded-xl bg-white hover:bg-[#f1f5f9] border border-black/25 text-[11px] font-extrabold text-black focus:outline-none cursor-pointer shrink-0">
+            <option value="osm" class="bg-white text-black">🧭 OpenStreetMap</option>
+            <option value="wikimedia" class="bg-white text-black">🌐 Wikimedia Maps</option>
+            <option value="vector" class="bg-white text-black">🗺️ Vettoriale HD</option>
+          </select>
+
+          <button id="recordVideoBtn" type="button"
+            class="min-h-[34px] px-2.5 py-1 rounded-xl bg-emerald-300 hover:bg-emerald-400 active:scale-95 text-black text-[11px] font-black border border-black/30 flex items-center gap-1.5 transition cursor-pointer shrink-0"
+            title="Registra l'animazione ed esporta in WebM">
+            <span id="recordDot" class="w-2 h-2 rounded-full bg-black shrink-0"></span>
+            <span id="recordBtnText">Video</span>
+          </button>
+
+          <button id="cleanModeBtn" type="button"
+            class="min-h-[34px] px-2.5 py-1 rounded-xl bg-white hover:bg-[#f1f5f9] active:scale-95 text-black text-[11px] font-extrabold border border-black/25 flex items-center gap-1 transition cursor-pointer shrink-0"
+            title="Solo Mappa (nascondi controlli)">
+            <span>🖼️</span>
+            <span class="hidden md:inline">Solo Mappa</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Riga 2: Stato Tratta, Modello Cursore Attivo e Profilo Zoom -->
+      <div id="routeHudBadge" class="pointer-events-none flex items-start justify-between gap-2 pr-12 sm:pr-14">
+        <div class="px-3 py-1.5 rounded-2xl bg-white/95 backdrop-blur-md border border-black/25 shadow-lg max-w-full">
+          <div class="flex flex-wrap items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-black">
+            <span id="hudItineraryTitle">Tour d'Italia &amp; Parigi</span>
+            <span class="text-black">•</span>
+            <span id="hudLegTitle" class="text-black normal-case tracking-normal text-[11px] sm:text-xs font-extrabold truncate">Roma → Firenze</span>
+            <span id="hudModelBadge"
+              class="px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-[#f1f5f9] text-black border border-black/20 shrink-0 normal-case tracking-normal">
+              Automobile · Berlina
+            </span>
+            <span id="hudZoomProfilePill"
+              class="px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-[#f8fafc] text-black border border-black/20 shrink-0 normal-case tracking-normal">
+              🔍 Zoom ravvicinato
+            </span>
+            <span id="hudArrivalPill"
+              class="hidden px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-amber-200 text-black border border-black/30 shrink-0">
+              🔍 Arrivo tappa
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2.5 mt-0.5 text-[10px] sm:text-[11px] text-black font-bold">
+            <span>Tappa: <strong id="hudStepCounter" class="text-black">1 / 5</strong></span>
+            <span>Distanza: <strong id="hudDistanceLabel" class="text-black">0 / 1598 km</strong></span>
+            <span id="hudSourceStatus" class="text-black">● Mappa Vettoriale HD</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- CONTROLLI ZOOM (+ / −) E TELECAMERA -->
+    <div id="cameraControls" class="fixed right-2.5 sm:right-3 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-1.5 sm:gap-2">
+      <button id="zoomInBtn" type="button"
+        class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-white/95 hover:bg-[#f1f5f9] active:scale-95 border border-black/25 text-black font-black text-lg sm:text-xl shadow-lg flex items-center justify-center transition cursor-pointer"
+        title="Avvicina (+)">+</button>
+      <button id="zoomOutBtn" type="button"
+        class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-white/95 hover:bg-[#f1f5f9] active:scale-95 border border-black/25 text-black font-black text-lg sm:text-xl shadow-lg flex items-center justify-center transition cursor-pointer"
+        title="Allontana (−)">−</button>
+      <button id="followCamBtn" type="button"
+        class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-rose-300 hover:bg-rose-400 active:scale-95 border border-black/30 text-black font-extrabold text-sm sm:text-base shadow-lg flex items-center justify-center transition cursor-pointer"
+        title="Centra sempre il cursore">🎯</button>
+      <button id="fitAllBtn" type="button"
+        class="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-white/95 hover:bg-[#f1f5f9] active:scale-95 border border-black/25 text-black font-extrabold text-sm sm:text-base shadow-lg flex items-center justify-center transition cursor-pointer"
+        title="Inquadra tutto l'itinerario">🗺️</button>
+    </div>
+
+    <!-- DOCK INFERIORE COMPATTA -->
+    <footer id="bottomDock"
+      class="fixed bottom-0 left-0 right-0 z-30 px-2.5 sm:px-3 safe-bottom flex flex-col items-center gap-1.5 pointer-events-none">
+
+      <div class="pointer-events-auto w-full max-w-4xl px-3 py-1.5 rounded-2xl bg-white/95 backdrop-blur-md border border-black/25 shadow-lg flex items-center gap-2 sm:gap-3">
+        <span id="timeElapsedText" class="text-[10px] sm:text-[11px] font-mono font-extrabold text-black w-9 text-right shrink-0">00:00</span>
+        <input id="progressSlider" type="range" min="0" max="1000" value="0"
+          class="tb-slider flex-1 min-w-[60px]" aria-label="Avanzamento percorso" />
+        <span id="percentText" class="text-[10px] sm:text-[11px] font-mono font-extrabold text-black w-9 shrink-0">0%</span>
+
+        <div class="flex items-center gap-1 sm:gap-1.5 pl-2 border-l border-black/20 shrink-0" title="Colore della traccia">
+          <button type="button" data-color="#ff3b5c" class="color-dot w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-[#ff3b5c] ring-2 ring-black scale-110 transition cursor-pointer"></button>
+          <button type="button" data-color="#00a8e8" class="color-dot w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-[#00a8e8] opacity-85 hover:opacity-100 transition cursor-pointer"></button>
+          <button type="button" data-color="#f97316" class="color-dot w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-[#f97316] opacity-85 hover:opacity-100 transition cursor-pointer"></button>
+          <button type="button" data-color="#10b981" class="color-dot w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-[#10b981] opacity-85 hover:opacity-100 transition cursor-pointer"></button>
+          <button type="button" data-color="#8b5cf6" class="color-dot w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-[#8b5cf6] opacity-85 hover:opacity-100 transition cursor-pointer"></button>
+        </div>
+      </div>
+
+      <div class="pointer-events-auto w-full max-w-4xl px-2.5 py-1.5 rounded-2xl bg-white/95 backdrop-blur-md border border-black/25 shadow-lg flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <span class="text-[10px] font-black uppercase tracking-wider text-black pl-0.5 shrink-0">Modello:</span>
+        <div id="modelDockList" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar"></div>
+      </div>
+
+      <div class="pointer-events-auto w-full max-w-4xl px-2 py-1.5 rounded-2xl bg-white backdrop-blur-md border border-black/25 shadow-lg flex items-center justify-between gap-1.5">
+        <div id="vehicleDockList" class="flex items-center gap-1 sm:gap-1.5 overflow-x-auto no-scrollbar py-0.5"></div>
+
+        <button id="toggleItineraryBtn" type="button"
+          class="min-h-[38px] px-3 sm:px-3.5 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 active:scale-95 text-black text-xs font-black border border-black/30 flex items-center gap-1.5 shrink-0 transition cursor-pointer">
+          <span>📍</span>
+          <span>Itinerario</span>
+        </button>
+      </div>
+    </footer>
+
+    <!-- CASSETTO / DRAWER ITINERARIO A SCHERMO INTERO (100dvh, z-50) CON TAPPE ALTE IN BASSO -->
+    <aside id="itineraryDrawer"
+      class="hidden fixed inset-0 z-50 w-full h-[100dvh] max-h-[100dvh] sm:inset-x-auto sm:top-2 sm:right-3 sm:bottom-2 sm:h-auto sm:max-h-[calc(100dvh-1rem)] sm:w-[475px] rounded-none sm:rounded-3xl bg-white border border-black/30 shadow-2xl flex flex-col overflow-hidden text-black">
+
+      <!-- Intestazione compatta -->
+      <div class="px-4 py-2 border-b border-black/15 flex items-center justify-between shrink-0 bg-[#f8fafc]">
+        <div>
+          <h2 class="text-sm font-black text-black">MapFinAnimation · Itinerario</h2>
+          <p class="text-[11px] font-semibold text-black">Ricerca mappe automatica, salvataggio manuale, foto e file</p>
+        </div>
+        <button id="closeDrawerBtn" type="button"
+          class="w-8 h-8 rounded-full bg-white hover:bg-[#f1f5f9] border border-black/25 text-black font-black flex items-center justify-center transition cursor-pointer"
+          aria-label="Chiudi itinerario">
+          ✕
+        </button>
+      </div>
+
+      <!-- Barra Azioni Principali: Titolo, + Nuovo itinerario, Salva itinerario, + Nuova tappa -->
+      <div class="px-4 py-2 border-b border-black/15 bg-white shrink-0 space-y-1.5">
+        <div class="flex flex-wrap items-center justify-between gap-1.5">
+          <label for="itineraryTitleInput" class="block text-[10px] font-black uppercase tracking-wider text-black">
+            🏷️ Titolo Itinerario
+          </label>
+          <div class="flex items-center gap-1.5">
+            <button id="createNewItineraryBtn" type="button"
+              class="px-2.5 py-1 rounded-xl bg-emerald-200 hover:bg-emerald-300 border border-black/25 text-black text-[10px] font-black transition cursor-pointer">
+              + Nuovo itinerario
+            </button>
+            <button id="saveItineraryManualBtn" type="button"
+              class="px-2.5 py-1 rounded-xl bg-amber-300 hover:bg-amber-400 border border-black/30 text-black text-[10px] font-black transition cursor-pointer">
+              💾 Salva itinerario
+            </button>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <input id="itineraryTitleInput" type="text" value="Tour d'Italia & Parigi"
+            placeholder="Inserisci il titolo dell'itinerario..."
+            class="flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-white border border-black/25 text-xs font-extrabold text-black focus:outline-none focus:border-black" />
+          <button id="addNewStopTopBtn" type="button"
+            class="px-2.5 py-1.5 rounded-xl bg-[#f1f5f9] hover:bg-sky-200 border border-black/25 text-black text-[11px] font-black shrink-0 transition cursor-pointer"
+            title="Aggiungi una nuova tappa">
+            + Nuova tappa
+          </button>
+        </div>
+      </div>
+
+      <!-- Box Creazione Nuovo Itinerario -->
+      <div id="newItineraryComposerBox"
+        class="hidden px-4 py-2.5 border-b border-black/20 bg-[#f8fafc] shrink-0 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-black text-black">✨ Nuovo Itinerario</span>
+          <button id="cancelNewItineraryBtn" type="button"
+            class="text-[10px] font-extrabold text-black underline cursor-pointer">Annulla</button>
+        </div>
+        <div>
+          <label for="newItineraryNameInput" class="block text-[10px] font-bold text-black mb-1">
+            Nome del nuovo itinerario
+          </label>
+          <input id="newItineraryNameInput" type="text" placeholder="Es. Viaggio in Grecia o Tour Alpino"
+            class="w-full px-3 py-1.5 rounded-xl bg-white border border-black/25 text-xs font-bold text-black focus:outline-none focus:border-black" />
+        </div>
+        <div class="flex items-center gap-2 pt-0.5">
+          <button id="confirmNewItineraryBtn" type="button"
+            class="flex-1 py-2 px-3 rounded-xl bg-emerald-300 hover:bg-emerald-400 text-black text-xs font-black border border-black/30 transition cursor-pointer">
+            Avvia nuovo itinerario
+          </button>
+          <button id="openAddFileFromComposerBtn" type="button"
+            class="py-2 px-3 rounded-xl bg-[#f1f5f9] hover:bg-sky-200 border border-black/25 text-black text-xs font-extrabold transition cursor-pointer">
+            Importa file
+          </button>
+        </div>
+      </div>
+
+      <!-- Schede Pannello -->
+      <div class="px-4 py-1.5 border-b border-black/15 flex items-center gap-2 shrink-0 bg-white">
+        <button id="tabStopsBtn" type="button"
+          class="flex-1 py-1.5 rounded-xl bg-rose-300 text-black text-xs font-black border border-black/30 transition cursor-pointer">
+          📍 Tappe &amp; Salvati
+        </button>
+        <button id="tabImportBtn" type="button"
+          class="flex-1 py-1.5 rounded-xl bg-white hover:bg-[#f1f5f9] text-black text-xs font-extrabold border border-black/20 transition cursor-pointer">
+          🤖 Importa File / PDF / Excel
+        </button>
+      </div>
+
+      <!-- VISTA 1: SEZIONE TAPPE AMPIA IN BASSO (min-h-[68dvh] flex-1) -->
+      <div id="stopsTabView" class="flex-1 min-h-0 flex flex-col overflow-hidden bg-white">
+        <!-- Sezione superiore compatta: Itinerari salvati + Esporta/JSON -->
+        <div class="px-3.5 py-2 border-b border-black/15 bg-[#f8fafc] space-y-1.5 shrink-0 max-h-[16dvh] overflow-y-auto thin-scroll">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[10px] font-black uppercase tracking-wider text-black">Itinerari Salvati (LocalStorage)</span>
+            <div class="flex items-center gap-1.5">
+              <button id="importJsonQuickBtn" type="button"
+                class="px-2 py-0.5 rounded-lg bg-white hover:bg-[#f1f5f9] border border-black/25 text-[10px] font-extrabold text-black transition cursor-pointer">
+                📂 JSON
+              </button>
+              <input id="jsonQuickInput" type="file" accept=".json,application/json" class="sr-only" />
+              <button id="exportJsonBtn" type="button"
+                class="px-2 py-0.5 rounded-lg bg-white hover:bg-[#f1f5f9] border border-black/25 text-[10px] font-extrabold text-black transition cursor-pointer">
+                📤 Esporta
+              </button>
+            </div>
+          </div>
+          <div id="savedItinerariesList" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"></div>
+        </div>
+
+        <!-- Sezione inferiore estesa (min-h-[68dvh] flex-1) dedicata alle tappe e alla ricerca luoghi -->
+        <div class="min-h-[68dvh] flex-1 flex flex-col overflow-hidden bg-white">
+          <div class="p-3 border-b border-black/15 space-y-2 relative shrink-0 bg-white">
+            <div class="flex gap-1.5">
+              <div class="relative flex-1 min-w-0">
+                <input id="citySearchInput" type="text" autocomplete="off"
+                  placeholder="Cerca nuovo luogo (es. Firenze, San Marino, Tokyo...)"
+                  class="w-full px-3 py-2 rounded-xl bg-white border border-black/30 text-xs font-bold text-black focus:outline-none focus:border-black" />
+              </div>
+              <button id="searchPlaceCandidatesBtn" type="button"
+                class="px-3 py-2 rounded-xl bg-rose-300 hover:bg-rose-400 border border-black/30 text-black text-xs font-black shrink-0 transition cursor-pointer"
+                title="Cerca luogo">
+                Cerca
+              </button>
+              <button id="mapPickToggleBtn" type="button"
+                class="px-2.5 py-2 rounded-xl bg-[#f1f5f9] hover:bg-sky-200 border border-black/25 text-black text-xs font-black shrink-0 transition cursor-pointer"
+                title="Tocca un punto sulla mappa per aggiungerlo">
+                🎯
+              </button>
+            </div>
+
+            <!-- Tendina suggerimenti luoghi trovati -->
+            <div id="placeCandidatesBox"
+              class="hidden rounded-2xl bg-white border border-black/35 p-2 space-y-1.5 max-h-56 overflow-y-auto thin-scroll shadow-xl">
+              <div class="flex items-center justify-between px-1">
+                <span id="placeCandidatesTitle" class="text-[10px] font-black uppercase tracking-wider text-black">
+                  Luoghi suggeriti
+                </span>
+                <button id="closeCandidatesBtn" type="button" class="text-[10px] font-extrabold text-black underline cursor-pointer">Chiudi</button>
+              </div>
+              <div id="placeCandidatesList" class="space-y-1"></div>
+            </div>
+
+            <p id="mapPickHint" class="hidden text-[11px] font-bold text-black bg-[#f1f5f9] px-2.5 py-1 rounded-lg border border-black/20">
+              Tocca un punto qualsiasi sulla mappa per aggiungerlo come nuova tappa...
+            </p>
+          </div>
+
+          <!-- Lista scorrevole delle tappe -->
+          <div id="stopsContainer" class="flex-1 min-h-0 overflow-y-auto thin-scroll overscroll-contain p-3 pb-20 space-y-2.5 bg-white"></div>
+        </div>
+      </div>
+
+      <!-- VISTA 2: IMPORTAZIONE DA PDF, EXCEL/CSV, TXT, JSON O TESTO LIBERO -->
+      <div id="importTabView" class="hidden flex-1 overflow-y-auto thin-scroll overscroll-contain p-3.5 space-y-3 bg-white">
+        <div class="p-3 rounded-2xl bg-[#f8fafc] border border-black/25 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-black text-black">📱 Carica da Dispositivo</span>
+            <span class="text-[10px] font-extrabold text-black">PDF · Excel · CSV · TXT · JSON</span>
+          </div>
+          <label for="deviceAnyFileInput" id="addFileDeviceBtn"
+            class="w-full py-2.5 px-3 rounded-xl bg-[#f1f5f9] hover:bg-sky-200 active:scale-[0.99] text-black text-xs font-black border border-black/30 flex items-center justify-center gap-2 transition cursor-pointer">
+            <span>📂</span>
+            <span>Scegli file dal dispositivo</span>
+          </label>
+          <input id="deviceAnyFileInput" type="file"
+            accept=".pdf,.xlsx,.xls,.csv,.txt,.json,.tsv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain,application/json,*/*"
+            class="sr-only" />
+        </div>
+
+        <div class="p-3 rounded-2xl bg-white border border-black/20 space-y-1.5">
+          <label for="importTitleInput" class="block text-[11px] font-black text-black">
+            🏷️ Titolo Itinerario Importato
+          </label>
+          <input id="importTitleInput" type="text" placeholder="Es. Viaggio in Costiera & Grecia"
+            class="w-full px-3 py-1.5 rounded-xl bg-white border border-black/25 text-xs font-bold text-black focus:outline-none focus:border-black" />
+        </div>
+
+        <div class="grid grid-cols-3 gap-2">
+          <label for="pdfFileInput"
+            class="py-2.5 px-2 rounded-xl bg-rose-200 hover:bg-rose-300 border border-black/25 text-black text-[11px] font-black flex flex-col items-center justify-center gap-1 text-center transition cursor-pointer">
+            <span>📕</span>
+            <span>File PDF</span>
+          </label>
+          <input id="pdfFileInput" type="file" accept=".pdf,application/pdf" class="sr-only" />
+
+          <label for="excelFileInput"
+            class="py-2.5 px-2 rounded-xl bg-emerald-200 hover:bg-emerald-300 border border-black/25 text-black text-[11px] font-black flex flex-col items-center justify-center gap-1 text-center transition cursor-pointer">
+            <span>📊</span>
+            <span>Excel / CSV</span>
+          </label>
+          <input id="excelFileInput" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" class="sr-only" />
+
+          <label for="textFileInput"
+            class="py-2.5 px-2 rounded-xl bg-amber-200 hover:bg-amber-300 border border-black/25 text-black text-[11px] font-black flex flex-col items-center justify-center gap-1 text-center transition cursor-pointer">
+            <span>📄</span>
+            <span>TXT / JSON</span>
+          </label>
+          <input id="textFileInput" type="file" accept=".txt,.json,.tsv,text/plain,application/json" class="sr-only" />
+        </div>
+
+        <div class="p-3 rounded-2xl bg-white border border-black/20 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <label for="freeformTextArea" class="text-xs font-black text-black">🤖 Testo o Programma di Viaggio</label>
+            <div class="flex items-center gap-2">
+              <button id="fillSampleTextBtn" type="button"
+                class="text-[10px] font-extrabold text-black underline cursor-pointer">
+                Esempio
+              </button>
+              <button id="runAiExtractBtn" type="button"
+                class="px-2.5 py-1 rounded-lg bg-amber-300 hover:bg-amber-400 border border-black/25 text-black text-[10px] font-black transition cursor-pointer">
+                ✨ Estrai tappe
+              </button>
+            </div>
+          </div>
+          <textarea id="freeformTextArea" rows="3"
+            placeholder="Incolla un programma o racconto: es. 'Partenza da Roma in auto verso Firenze, poi in barca a Venezia e volo per Parigi'..."
+            class="w-full p-2.5 rounded-xl bg-white border border-black/25 text-xs font-medium text-black focus:outline-none focus:border-black resize-y"></textarea>
+        </div>
+
+        <div class="p-3 rounded-2xl bg-[#f8fafc] border border-black/25 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-black text-black">Anteprima Tappe Estratte</span>
+            <span id="parsedCountBadge" class="px-2 py-0.5 rounded-full bg-amber-200 border border-black/25 text-[10px] font-black text-black">0 tappe</span>
+          </div>
+          <div id="importPreviewList" class="max-h-36 overflow-y-auto thin-scroll space-y-1 text-[11px] text-black">
+            <p class="italic text-black">Carica un file PDF, Excel, CSV, TXT/JSON oppure incolla un testo...</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <button id="replaceItineraryBtn" type="button" disabled
+              class="py-2.5 px-2 rounded-xl bg-rose-300 hover:bg-rose-400 disabled:opacity-40 disabled:pointer-events-none text-black text-xs font-black border border-black/30 transition cursor-pointer">
+              Sostituisci itinerario
+            </button>
+            <button id="appendItineraryBtn" type="button" disabled
+              class="py-2.5 px-2 rounded-xl bg-amber-200 hover:bg-amber-300 disabled:opacity-40 disabled:pointer-events-none text-black text-xs font-black border border-black/30 transition cursor-pointer">
+              Aggiungi in coda
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Input nascosto per caricare fino a 3 foto per una singola tappa -->
+    <input id="stopPhotosFileInput" type="file" accept="image/*" multiple class="sr-only" />
+
+    <!-- Tooltip su Hover Tappa -->
+    <div id="hoverTooltip"
+      class="hidden pointer-events-none fixed z-50 px-3 py-1.5 rounded-xl bg-white border border-black/30 text-xs font-extrabold text-black shadow-xl">
+    </div>
+
+    <!-- Banner Toast Notifiche -->
+    <div id="toastNotice"
+      class="hidden pointer-events-none fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-white border border-black/30 text-xs font-extrabold text-black shadow-xl flex items-center gap-2 max-w-[90vw]">
+      <span id="toastNoticeIcon" class="shrink-0">✨</span>
+      <span id="toastNoticeText" class="truncate"></span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      }
+
+      // =========================================================================
+      // 1. COSTANTI MOTORE MAPPA WEB MERCATOR, TILE LIBERI (OSM/WIKIMEDIA) E VETTORIALE
+      // =========================================================================
+      const MAP_SCALE_FACTOR = 0.5;
+      const TILE_SIZE = 256;
+      const MIN_ZOOM = 2.0;
+      const MAX_ZOOM = 18;
+      const NOMINAL_LEG_SEC = 6.2;
+      const MAX_TILE_CACHE_ENTRIES = 420;
+      const TILE_TIMEOUT_MS = 2600;
+      const STORAGE_KEY_SAVED_ITINERARIES = "mapfinanimation_saved_itineraries_v2";
+
+      // Esclusivamente tile liberi (OpenStreetMap e Wikimedia Maps) + modalità Vettoriale HD pura
+      const FREE_TILE_PROVIDERS = {
+        osm: [
+          (z, x, y) => `https://${["a", "b", "c"][Math.abs(x + y + z) % 3]}.tile.openstreetmap.org/${z}/${x}/${y}.png`,
+          (z, x, y) => `https://maps.wikimedia.org/osm-intl/${z}/${x}/${y}.png`
+        ],
+        wikimedia: [
+          (z, x, y) => `https://maps.wikimedia.org/osm-intl/${z}/${x}/${y}.png`,
+          (z, x, y) => `https://${["a", "b", "c"][Math.abs(x + y + z) % 3]}.tile.openstreetmap.org/${z}/${x}/${y}.png`
+        ],
+        vector: []
+      };
+
+      const CITIES_DB = [
+        { name: "Roma", aliases: ["rome"], country: "Italia", region: "Lazio", lat: 41.9028, lon: 12.4964 },
+        { name: "Milano", aliases: ["milan"], country: "Italia", region: "Lombardia", lat: 45.4642, lon: 9.1900 },
+        { name: "Napoli", aliases: ["naples"], country: "Italia", region: "Campania", lat: 40.8518, lon: 14.2681 },
+        { name: "Torino", aliases: ["turin"], country: "Italia", region: "Piemonte", lat: 45.0703, lon: 7.6869 },
+        { name: "Firenze", aliases: ["florence"], country: "Italia", region: "Toscana", lat: 43.7696, lon: 11.2558 },
+        { name: "Venezia", aliases: ["venice"], country: "Italia", region: "Veneto", lat: 45.4408, lon: 12.3155 },
+        { name: "Bologna", aliases: [], country: "Italia", region: "Emilia-Romagna", lat: 44.4949, lon: 11.3426 },
+        { name: "Genova", aliases: ["genoa"], country: "Italia", region: "Liguria", lat: 44.4056, lon: 8.9463 },
+        { name: "Palermo", aliases: [], country: "Italia", region: "Sicilia", lat: 38.1157, lon: 13.3615 },
+        { name: "Catania", aliases: [], country: "Italia", region: "Sicilia", lat: 37.5079, lon: 15.0830 },
+        { name: "Bari", aliases: [], country: "Italia", region: "Puglia", lat: 41.1171, lon: 16.8719 },
+        { name: "Verona", aliases: [], country: "Italia", region: "Veneto", lat: 45.4384, lon: 10.9916 },
+        { name: "Padova", aliases: ["padua"], country: "Italia", region: "Veneto", lat: 45.4064, lon: 11.8768 },
+        { name: "Trieste", aliases: [], country: "Italia", region: "Friuli-Venezia Giulia", lat: 45.6495, lon: 13.7768 },
+        { name: "Pisa", aliases: [], country: "Italia", region: "Toscana", lat: 43.7228, lon: 10.4017 },
+        { name: "Siena", aliases: [], country: "Italia", region: "Toscana", lat: 43.3188, lon: 11.3308 },
+        { name: "Perugia", aliases: [], country: "Italia", region: "Umbria", lat: 43.1107, lon: 12.3908 },
+        { name: "Cagliari", aliases: [], country: "Italia", region: "Sardegna", lat: 39.2238, lon: 9.1217 },
+        { name: "Olbia", aliases: [], country: "Italia", region: "Sardegna", lat: 40.9236, lon: 9.4964 },
+        { name: "Lecce", aliases: [], country: "Italia", region: "Puglia", lat: 40.3515, lon: 18.1750 },
+        { name: "Amalfi", aliases: [], country: "Italia", region: "Campania", lat: 40.6333, lon: 14.6029 },
+        { name: "Sorrento", aliases: [], country: "Italia", region: "Campania", lat: 40.6263, lon: 14.3758 },
+        { name: "San Marino", aliases: [], country: "San Marino", region: "Repubblica", lat: 43.9424, lon: 12.4578 },
+        { name: "Bolzano", aliases: ["bozen"], country: "Italia", region: "Trentino-Alto Adige", lat: 46.4983, lon: 11.3548 },
+        { name: "Trento", aliases: [], country: "Italia", region: "Trentino-Alto Adige", lat: 46.0748, lon: 11.1217 },
+        { name: "Como", aliases: [], country: "Italia", region: "Lombardia", lat: 45.8081, lon: 9.0852 },
+        { name: "Bergamo", aliases: [], country: "Italia", region: "Lombardia", lat: 45.6983, lon: 9.6773 },
+        { name: "Rimini", aliases: [], country: "Italia", region: "Emilia-Romagna", lat: 44.0678, lon: 12.5695 },
+        { name: "Ancona", aliases: [], country: "Italia", region: "Marche", lat: 43.6158, lon: 13.5189 },
+        { name: "Matera", aliases: [], country: "Italia", region: "Basilicata", lat: 40.6663, lon: 16.6043 },
+        { name: "Taormina", aliases: [], country: "Italia", region: "Sicilia", lat: 37.8516, lon: 15.2853 },
+        { name: "Siracusa", aliases: ["syracuse"], country: "Italia", region: "Sicilia", lat: 37.0755, lon: 15.2866 },
+        { name: "Parigi", aliases: ["paris"], country: "Francia", region: "Île-de-France", lat: 48.8566, lon: 2.3522 },
+        { name: "Nizza", aliases: ["nice"], country: "Francia", region: "Costa Azzurra", lat: 43.7102, lon: 7.2620 },
+        { name: "Lione", aliases: ["lyon"], country: "Francia", region: "Alvernia-Rodano-Alpi", lat: 45.7640, lon: 4.8357 },
+        { name: "Marsiglia", aliases: ["marseille"], country: "Francia", region: "Provenza", lat: 43.2965, lon: 5.3698 },
+        { name: "Londra", aliases: ["london"], country: "Regno Unito", region: "Inghilterra", lat: 51.5072, lon: -0.1276 },
+        { name: "Edimburgo", aliases: ["edinburgh"], country: "Regno Unito", region: "Scozia", lat: 55.9533, lon: -3.1883 },
+        { name: "Dublino", aliases: ["dublin"], country: "Irlanda", region: "Leinster", lat: 53.3498, lon: -6.2603 },
+        { name: "Madrid", aliases: [], country: "Spagna", region: "Comunità di Madrid", lat: 40.4168, lon: -3.7038 },
+        { name: "Barcellona", aliases: ["barcelona"], country: "Spagna", region: "Catalogna", lat: 41.3874, lon: 2.1686 },
+        { name: "Siviglia", aliases: ["seville", "sevilla"], country: "Spagna", region: "Andalusia", lat: 37.3891, lon: -5.9845 },
+        { name: "Valencia", aliases: [], country: "Spagna", region: "Comunità Valenciana", lat: 39.4699, lon: -0.3763 },
+        { name: "Lisbona", aliases: ["lisbon", "lisboa"], country: "Portogallo", region: "Estremadura", lat: 38.7223, lon: -9.1393 },
+        { name: "Porto", aliases: [], country: "Portogallo", region: "Norte", lat: 41.1579, lon: -8.6291 },
+        { name: "Berlino", aliases: ["berlin"], country: "Germania", region: "Brandeburgo", lat: 52.5200, lon: 13.4050 },
+        { name: "Monaco di Baviera", aliases: ["monaco", "munich", "münchen"], country: "Germania", region: "Baviera", lat: 48.1351, lon: 11.5820 },
+        { name: "Amburgo", aliases: ["hamburg"], country: "Germania", region: "Nord Germania", lat: 53.5511, lon: 9.9937 },
+        { name: "Francoforte", aliases: ["frankfurt"], country: "Germania", region: "Assia", lat: 50.1109, lon: 8.6821 },
+        { name: "Amsterdam", aliases: [], country: "Paesi Bassi", region: "Olanda Settentrionale", lat: 52.3676, lon: 4.9041 },
+        { name: "Bruxelles", aliases: ["brussels"], country: "Belgio", region: "Brabante", lat: 50.8503, lon: 4.3517 },
+        { name: "Zurigo", aliases: ["zurich", "zürich"], country: "Svizzera", region: "Svizzera Tedesca", lat: 47.3769, lon: 8.5417 },
+        { name: "Ginevra", aliases: ["geneva"], country: "Svizzera", region: "Romandia", lat: 46.2044, lon: 6.1432 },
+        { name: "Vienna", aliases: ["wien"], country: "Austria", region: "Bassa Austria", lat: 48.2082, lon: 16.3738 },
+        { name: "Praga", aliases: ["prague", "praha"], country: "Rep. Ceca", region: "Boemia", lat: 50.0755, lon: 14.4378 },
+        { name: "Budapest", aliases: [], country: "Ungheria", region: "Pest", lat: 47.4979, lon: 19.0402 },
+        { name: "Varsavia", aliases: ["warsaw"], country: "Polonia", region: "Masovia", lat: 52.2297, lon: 21.0122 },
+        { name: "Cracovia", aliases: ["krakow"], country: "Polonia", region: "Piccola Polonia", lat: 50.0647, lon: 19.9450 },
+        { name: "Atene", aliases: ["athens"], country: "Grecia", region: "Attica", lat: 37.9838, lon: 23.7275 },
+        { name: "Santorini", aliases: [], country: "Grecia", region: "Cicladi", lat: 36.3932, lon: 25.4615 },
+        { name: "Istanbul", aliases: [], country: "Turchia", region: "Marmara", lat: 41.0082, lon: 28.9784 },
+        { name: "Copenaghen", aliases: ["copenhagen"], country: "Danimarca", region: "Zelanda", lat: 55.6761, lon: 12.5683 },
+        { name: "Stoccolma", aliases: ["stockholm"], country: "Svezia", region: "Svealand", lat: 59.3293, lon: 18.0686 },
+        { name: "Oslo", aliases: [], country: "Norvegia", region: "Ostlandet", lat: 59.9139, lon: 10.7522 },
+        { name: "Reykjavik", aliases: [], country: "Islanda", region: "Sud-Ovest", lat: 64.1466, lon: -21.9426 },
+        { name: "New York", aliases: ["nyc"], country: "USA", region: "New York", lat: 40.7128, lon: -74.0060 },
+        { name: "Los Angeles", aliases: ["la"], country: "USA", region: "California", lat: 34.0522, lon: -118.2437 },
+        { name: "San Francisco", aliases: [], country: "USA", region: "California", lat: 37.7749, lon: -122.4194 },
+        { name: "Miami", aliases: [], country: "USA", region: "Florida", lat: 25.7617, lon: -80.1918 },
+        { name: "Toronto", aliases: [], country: "Canada", region: "Ontario", lat: 43.6532, lon: -79.3832 },
+        { name: "Rio de Janeiro", aliases: ["rio"], country: "Brasile", region: "Rio de Janeiro", lat: -22.9068, lon: -43.1729 },
+        { name: "Buenos Aires", aliases: [], country: "Argentina", region: "Buenos Aires", lat: -34.6037, lon: -58.3816 },
+        { name: "Tokyo", aliases: ["tokio"], country: "Giappone", region: "Kanto", lat: 35.6762, lon: 139.6503 },
+        { name: "Kyoto", aliases: [], country: "Giappone", region: "Kansai", lat: 35.0116, lon: 135.7681 },
+        { name: "Osaka", aliases: [], country: "Giappone", region: "Kansai", lat: 34.6937, lon: 135.5023 },
+        { name: "Seoul", aliases: [], country: "Corea del Sud", region: "Capitale", lat: 37.5665, lon: 126.9780 },
+        { name: "Pechino", aliases: ["beijing"], country: "Cina", region: "Hebei", lat: 39.9042, lon: 116.4074 },
+        { name: "Shanghai", aliases: [], country: "Cina", region: "Jiangsu", lat: 31.2304, lon: 121.4737 },
+        { name: "Bangkok", aliases: [], country: "Thailandia", region: "Chao Phraya", lat: 13.7563, lon: 100.5018 },
+        { name: "Singapore", aliases: [], country: "Singapore", region: "Sud-Est Asiatico", lat: 1.3521, lon: 103.8198 },
+        { name: "Dubai", aliases: [], country: "Emirati Arabi", region: "Golfo Persico", lat: 25.2048, lon: 55.2708 },
+        { name: "Il Cairo", aliases: ["cairo"], country: "Egitto", region: "Nilo", lat: 30.0444, lon: 31.2357 },
+        { name: "Marrakech", aliases: [], country: "Marocco", region: "Marrakech-Safi", lat: 31.6295, lon: -7.9811 },
+        { name: "Città del Capo", aliases: ["cape town"], country: "Sudafrica", region: "Capo Occidentale", lat: -33.9249, lon: 18.4241 },
+        { name: "Sydney", aliases: [], country: "Australia", region: "Nuovo Galles del Sud", lat: -33.8688, lon: 151.2093 }
+      ];
+
+      // =========================================================================
+      // 2. 5 MEZZI DI TRASPORTO CON 3 MODELLI ILLUSTRATI CIASCUNO (15 MODELLI TOTALI)
+      // =========================================================================
+      const VEHICLE_CATEGORIES = [
+        {
+          id: "aereo",
+          label: "Aereo",
+          keywords: ["aereo", "plane", "flight", "volo", "jet", "biplano"],
+          dash: [10, 7],
+          width: 4.6,
+          isAir: true,
+          models: [
+            { id: "airliner", label: "Aereo di linea", primary: "#f8fafc", accent: "#ef4444", detail: "#0284c7" },
+            { id: "private_jet", label: "Jet privato", primary: "#fbbf24", accent: "#1e293b", detail: "#f59e0b" },
+            { id: "biplane", label: "Biplano d'epoca", primary: "#dc2626", accent: "#fef08a", detail: "#78350f" }
+          ]
+        },
+        {
+          id: "bus",
+          label: "Bus",
+          keywords: ["bus", "pullman", "corriera", "coach", "minibus", "van", "camper"],
+          dash: [],
+          width: 5.8,
+          isAir: false,
+          models: [
+            { id: "coach_gt", label: "Bus Gran Turismo", primary: "#38bdf8", accent: "#0f172a", detail: "#e0f2fe" },
+            { id: "double_decker", label: "Bus rosso 2 piani", primary: "#e11d48", accent: "#fff1f2", detail: "#1e293b" },
+            { id: "minibus", label: "Minibus / Van", primary: "#f59e0b", accent: "#fef3c7", detail: "#1e293b" }
+          ]
+        },
+        {
+          id: "automobile",
+          label: "Automobile",
+          keywords: ["automobile", "auto", "macchina", "car", "drive", "suv", "sportiva", "berlina"],
+          dash: [],
+          width: 5.4,
+          isAir: false,
+          models: [
+            { id: "sedan", label: "Berlina", primary: "#f8fafc", accent: "#0f172a", detail: "#3b82f6" },
+            { id: "suv", label: "SUV Avventura", primary: "#10b981", accent: "#064e3b", detail: "#d1fae5" },
+            { id: "sports", label: "Sportiva", primary: "#ef4444", accent: "#ffffff", detail: "#111827" }
+          ]
+        },
+        {
+          id: "barca",
+          label: "Barca",
+          keywords: ["barca", "nave", "traghetto", "crociera", "vela", "motoscafo", "ship", "ferry", "boat", "yacht"],
+          dash: [8, 8],
+          width: 5.0,
+          isAir: false,
+          models: [
+            { id: "cruise", label: "Nave da crociera", primary: "#ffffff", accent: "#0284c7", detail: "#f97316" },
+            { id: "sailboat", label: "Barca a vela", primary: "#fef3c7", accent: "#d97706", detail: "#ffffff" },
+            { id: "speedboat", label: "Motoscafo", primary: "#06b6d4", accent: "#0f172a", detail: "#f43f5e" }
+          ]
+        },
+        {
+          id: "piedi",
+          label: "A piedi",
+          keywords: ["piedi", "a piedi", "cammino", "escursionista", "runner", "walk", "trek", "hiking"],
+          dash: [2, 6],
+          width: 4.0,
+          isAir: false,
+          models: [
+            { id: "hiker", label: "Escursionista", primary: "#f97316", accent: "#15803d", detail: "#fef3c7" },
+            { id: "walker", label: "Camminatore", primary: "#60a5fa", accent: "#1e3a8a", detail: "#fde68a" },
+            { id: "runner", label: "Runner", primary: "#a855f7", accent: "#facc15", detail: "#ffffff" }
+          ]
+        }
+      ];
+
+      const DEFAULT_INITIAL_STOPS = [
+        { id: "st_roma", name: "Roma", lat: 41.9028, lon: 12.4964, vehicle: "automobile", model: "sedan", pauseSec: 4, photos: [], photoCaption: "" },
+        { id: "st_firenze", name: "Firenze", lat: 43.7696, lon: 11.2558, vehicle: "bus", model: "coach_gt", pauseSec: 4, photos: [], photoCaption: "Piazza del Duomo e Lungarno" },
+        { id: "st_venezia", name: "Venezia", lat: 45.4408, lon: 12.3155, vehicle: "barca", model: "cruise", pauseSec: 4, photos: [], photoCaption: "Canal Grande e San Marco" },
+        { id: "st_milano", name: "Milano", lat: 45.4642, lon: 9.1900, vehicle: "aereo", model: "airliner", pauseSec: 4, photos: [], photoCaption: "Duomo di Milano" },
+        { id: "st_parigi", name: "Parigi", lat: 48.8566, lon: 2.3522, vehicle: "piedi", model: "walker", pauseSec: 5, photos: [], photoCaption: "Tour Eiffel e Senna" }
+      ];
+
+      // Masse continentali e coste per la mappa vettoriale continua
+      const CONTINENTS_POLYGONS = [
+        [
+          [-10.5, 36.0], [-9.2, 38.8], [-9.0, 43.5], [-1.8, 43.4], [-4.5, 48.4],
+          [2.0, 51.0], [8.5, 53.6], [8.2, 57.0], [10.5, 57.7], [12.0, 55.4],
+          [14.5, 54.0], [21.0, 55.5], [24.0, 59.5], [30.0, 60.0], [28.0, 65.5],
+          [18.0, 69.0], [10.0, 63.5], [5.0, 60.5], [5.5, 58.5], [14.0, 55.5],
+          [19.0, 54.3], [24.5, 57.0], [28.5, 59.8], [39.5, 66.5], [58.0, 69.5],
+          [60.0, 55.0], [49.0, 46.5], [40.0, 44.5], [36.5, 45.2], [30.5, 46.3],
+          [28.5, 41.0], [26.0, 40.2], [23.8, 37.8], [22.4, 36.5], [19.8, 39.8],
+          [18.0, 40.2], [15.6, 38.0], [12.5, 41.8], [9.0, 44.3], [6.5, 43.2],
+          [3.1, 42.4], [0.5, 40.5], [-5.6, 36.0]
+        ],
+        [
+          [-17.2, 14.7], [-16.5, 20.8], [-13.0, 28.0], [-5.8, 35.8], [10.5, 37.2],
+          [11.5, 33.0], [25.0, 32.0], [32.3, 31.2], [34.5, 27.5], [43.2, 12.6],
+          [51.3, 11.8], [40.5, -2.5], [35.0, -18.0], [32.8, -26.0], [27.5, -33.0],
+          [18.4, -34.3], [14.5, -23.0], [11.8, -6.0], [9.5, 4.0], [2.5, 6.3],
+          [-7.5, 4.5], [-13.5, 9.0]
+        ],
+        [
+          [-166.0, 65.5], [-162.0, 55.0], [-135.0, 58.0], [-124.5, 48.0], [-124.2, 40.0],
+          [-117.2, 32.5], [-110.0, 23.5], [-105.0, 20.5], [-97.0, 26.0], [-96.5, 19.0],
+          [-87.0, 21.3], [-83.5, 10.0], [-78.0, 8.5], [-80.5, 25.2], [-81.5, 30.5],
+          [-75.5, 35.2], [-74.0, 40.5], [-70.0, 41.8], [-64.0, 45.0], [-55.5, 47.5],
+          [-60.0, 52.0], [-64.0, 60.0], [-78.0, 62.5], [-94.0, 69.0], [-110.0, 68.5],
+          [-140.0, 70.0], [-162.0, 68.5]
+        ],
+        [
+          [-80.0, 9.5], [-73.0, 11.5], [-61.5, 10.5], [-50.0, 1.0], [-35.2, -5.8],
+          [-38.5, -13.0], [-43.2, -22.9], [-48.5, -27.5], [-53.5, -33.5], [-65.0, -41.0],
+          [-68.0, -54.8], [-74.5, -52.5], [-73.5, -41.5], [-70.5, -30.0], [-70.5, -18.5],
+          [-81.2, -4.5], [-79.5, 1.5]
+        ],
+        [
+          [26.5, 40.8], [35.5, 36.0], [36.0, 31.5], [43.0, 13.0], [56.0, 22.5],
+          [59.5, 22.5], [51.0, 29.5], [48.5, 30.2], [66.5, 25.0], [72.8, 19.0],
+          [77.5, 8.2], [80.2, 13.0], [88.5, 22.0], [92.0, 16.5], [97.5, 15.5],
+          [103.8, 1.3], [100.5, 13.5], [109.2, 12.2], [108.0, 21.0], [118.0, 24.5],
+          [122.0, 31.2], [121.5, 37.5], [126.5, 35.0], [129.2, 35.1], [130.5, 42.5],
+          [140.5, 44.0], [142.0, 53.5], [160.0, 56.0], [170.0, 64.0], [140.0, 71.0],
+          [105.0, 76.0], [72.0, 72.0], [58.0, 69.5]
+        ],
+        [
+          [114.0, -22.0], [115.5, -32.0], [122.0, -34.0], [131.0, -31.8], [138.0, -35.0],
+          [147.0, -38.5], [150.5, -36.5], [153.5, -27.5], [146.5, -19.0], [142.5, -11.0],
+          [136.5, -12.2], [129.0, -14.8], [122.2, -18.0]
+        ]
+      ];
+
+      const VECTOR_CORRIDORS = [
+        [[7.6869, 45.0703], [9.1900, 45.4642], [11.3426, 44.4949], [11.2558, 43.7696], [12.4964, 41.9028], [14.2681, 40.8518]],
+        [[9.1900, 45.4642], [10.9916, 45.4384], [11.8768, 45.4064], [12.3155, 45.4408], [13.7768, 45.6495]],
+        [[2.3522, 48.8566], [4.8357, 45.7640], [7.2620, 43.7102], [8.9463, 44.4056], [10.4017, 43.7228], [11.2558, 43.7696]],
+        [[2.3522, 48.8566], [4.3517, 50.8503], [4.9041, 52.3676], [8.6821, 50.1109], [11.5820, 48.1351], [16.3738, 48.2082]],
+        [[-3.7038, 40.4168], [2.1686, 41.3874], [5.3698, 43.2965], [7.2620, 43.7102]]
+      ];
+
+      // =========================================================================
+      // 3. STATO APPLICAZIONE E RIFERIMENTI DOM
+      // =========================================================================
+      const state = {
+        itineraryId: "draft_default",
+        itineraryTitle: "Tour d'Italia & Parigi",
+        isDraftItinerary: true,
+        stops: DEFAULT_INITIAL_STOPS.map((s) => ({ ...s, photos: [] })),
+        savedItineraries: [],
+        activeVehicle: "automobile",
+        activeModel: "sedan",
+        routeColor: "#ff3b5c",
+        mapTheme: "osm",
+        aspectMode: "full",
+        progress: 0,
+        playing: true,
+        speed: 1,
+        followCamera: true,
+        baseZoom: 11.8,
+        manualZoomOffset: 0,
+        arrivalZoomBoost: 0,
+        centerLat: 41.9028,
+        centerLon: 12.4964,
+        viewportWidth: window.innerWidth || 1280,
+        viewportHeight: window.innerHeight || 720,
+        dragging: false,
+        dragStartX: 0,
+        dragStartY: 0,
+        dragStartLat: 0,
+        dragStartLon: 0,
+        pickMode: false,
+        cleanMode: false,
+        drawerOpen: false,
+        lastTimestamp: 0,
+        elapsedSec: 0,
+        tileCache: new Map(),
+        loadedTiles: 0,
+        mediaRecorder: null,
+        recordedChunks: [],
+        isRecording: false,
+        parsedImportStops: [],
+        photoUploadTargetStopId: null,
+        triggeredArrivalStopIds: new Set(),
+        photoModalOpen: false,
+        photoModalPaused: false,
+        photoModalStop: null,
+        photoModalIndex: 0,
+        photoAutoTimer: null,
+        photoAutoRemainingSec: 0
+      };
+
+      const dom = {
+        appRoot: document.getElementById("appRoot"),
+        canvas: document.getElementById("mapCanvas"),
+        topBar: document.getElementById("topBar"),
+        bottomDock: document.getElementById("bottomDock"),
+        routeHudBadge: document.getElementById("routeHudBadge"),
+        cameraControls: document.getElementById("cameraControls"),
+        itineraryDrawer: document.getElementById("itineraryDrawer"),
+        exitCleanModeBtn: document.getElementById("exitCleanModeBtn"),
+        cleanModeBtn: document.getElementById("cleanModeBtn"),
+        arrivalPhotoOverlay: document.getElementById("arrivalPhotoOverlay"),
+        photoOverlayItineraryTitle: document.getElementById("photoOverlayItineraryTitle"),
+        photoOverlayStopName: document.getElementById("photoOverlayStopName"),
+        photoOverlayCaption: document.getElementById("photoOverlayCaption"),
+        photoOverlayCounter: document.getElementById("photoOverlayCounter"),
+        photoOverlayStage: document.getElementById("photoOverlayStage"),
+        prevPhotoSlideBtn: document.getElementById("prevPhotoSlideBtn"),
+        nextPhotoSlideBtn: document.getElementById("nextPhotoSlideBtn"),
+        togglePhotoPauseBtn: document.getElementById("togglePhotoPauseBtn"),
+        photoAutoAdvanceToggle: document.getElementById("photoAutoAdvanceToggle"),
+        photoAutoCountdown: document.getElementById("photoAutoCountdown"),
+        resumeFromPhotoBtn: document.getElementById("resumeFromPhotoBtn"),
+        playPauseBtn: document.getElementById("playPauseBtn"),
+        playPauseIcon: document.getElementById("playPauseIcon"),
+        playPauseText: document.getElementById("playPauseText"),
+        restartBtn: document.getElementById("restartBtn"),
+        mapThemeSelect: document.getElementById("mapThemeSelect"),
+        recordVideoBtn: document.getElementById("recordVideoBtn"),
+        recordDot: document.getElementById("recordDot"),
+        recordBtnText: document.getElementById("recordBtnText"),
+        hudItineraryTitle: document.getElementById("hudItineraryTitle"),
+        hudLegTitle: document.getElementById("hudLegTitle"),
+        hudModelBadge: document.getElementById("hudModelBadge"),
+        hudZoomProfilePill: document.getElementById("hudZoomProfilePill"),
+        hudArrivalPill: document.getElementById("hudArrivalPill"),
+        hudStepCounter: document.getElementById("hudStepCounter"),
+        hudDistanceLabel: document.getElementById("hudDistanceLabel"),
+        hudSourceStatus: document.getElementById("hudSourceStatus"),
+        zoomInBtn: document.getElementById("zoomInBtn"),
+        zoomOutBtn: document.getElementById("zoomOutBtn"),
+        followCamBtn: document.getElementById("followCamBtn"),
+        fitAllBtn: document.getElementById("fitAllBtn"),
+        timeElapsedText: document.getElementById("timeElapsedText"),
+        progressSlider: document.getElementById("progressSlider"),
+        percentText: document.getElementById("percentText"),
+        modelDockList: document.getElementById("modelDockList"),
+        vehicleDockList: document.getElementById("vehicleDockList"),
+        toggleItineraryBtn: document.getElementById("toggleItineraryBtn"),
+        closeDrawerBtn: document.getElementById("closeDrawerBtn"),
+        itineraryTitleInput: document.getElementById("itineraryTitleInput"),
+        createNewItineraryBtn: document.getElementById("createNewItineraryBtn"),
+        saveItineraryManualBtn: document.getElementById("saveItineraryManualBtn"),
+        addNewStopTopBtn: document.getElementById("addNewStopTopBtn"),
+        newItineraryComposerBox: document.getElementById("newItineraryComposerBox"),
+        newItineraryNameInput: document.getElementById("newItineraryNameInput"),
+        confirmNewItineraryBtn: document.getElementById("confirmNewItineraryBtn"),
+        cancelNewItineraryBtn: document.getElementById("cancelNewItineraryBtn"),
+        openAddFileFromComposerBtn: document.getElementById("openAddFileFromComposerBtn"),
+        deviceAnyFileInput: document.getElementById("deviceAnyFileInput"),
+        tabStopsBtn: document.getElementById("tabStopsBtn"),
+        tabImportBtn: document.getElementById("tabImportBtn"),
+        stopsTabView: document.getElementById("stopsTabView"),
+        importTabView: document.getElementById("importTabView"),
+        savedItinerariesList: document.getElementById("savedItinerariesList"),
+        citySearchInput: document.getElementById("citySearchInput"),
+        searchPlaceCandidatesBtn: document.getElementById("searchPlaceCandidatesBtn"),
+        placeCandidatesBox: document.getElementById("placeCandidatesBox"),
+        placeCandidatesTitle: document.getElementById("placeCandidatesTitle"),
+        placeCandidatesList: document.getElementById("placeCandidatesList"),
+        closeCandidatesBtn: document.getElementById("closeCandidatesBtn"),
+        mapPickToggleBtn: document.getElementById("mapPickToggleBtn"),
+        mapPickHint: document.getElementById("mapPickHint"),
+        stopsContainer: document.getElementById("stopsContainer"),
+        importJsonQuickBtn: document.getElementById("importJsonQuickBtn"),
+        jsonQuickInput: document.getElementById("jsonQuickInput"),
+        exportJsonBtn: document.getElementById("exportJsonBtn"),
+        importTitleInput: document.getElementById("importTitleInput"),
+        pdfFileInput: document.getElementById("pdfFileInput"),
+        excelFileInput: document.getElementById("excelFileInput"),
+        textFileInput: document.getElementById("textFileInput"),
+        freeformTextArea: document.getElementById("freeformTextArea"),
+        fillSampleTextBtn: document.getElementById("fillSampleTextBtn"),
+        runAiExtractBtn: document.getElementById("runAiExtractBtn"),
+        parsedCountBadge: document.getElementById("parsedCountBadge"),
+        importPreviewList: document.getElementById("importPreviewList"),
+        replaceItineraryBtn: document.getElementById("replaceItineraryBtn"),
+        appendItineraryBtn: document.getElementById("appendItineraryBtn"),
+        stopPhotosFileInput: document.getElementById("stopPhotosFileInput"),
+        hoverTooltip: document.getElementById("hoverTooltip"),
+        toastNotice: document.getElementById("toastNotice"),
+        toastNoticeIcon: document.getElementById("toastNoticeIcon"),
+        toastNoticeText: document.getElementById("toastNoticeText")
+      };
+
+      const ctx = dom.canvas.getContext("2d");
+
+      // =========================================================================
+      // 4. SALVATAGGIO MANUALE ESPLICITO SU LOCALSTORAGE
+      // =========================================================================
+      function loadSavedItinerariesFromStorage() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_SAVED_ITINERARIES);
+          if (!raw) return [];
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          return parsed.filter((item) => item && Array.isArray(item.stops) && item.stops.length > 0);
+        } catch (_) {
+          return [];
+        }
+      }
+
+      function persistSavedItinerariesToStorage() {
+        try {
+          localStorage.setItem(STORAGE_KEY_SAVED_ITINERARIES, JSON.stringify(state.savedItineraries));
+        } catch (err) {
+          try {
+            const lightweight = state.savedItineraries.map((it) => ({
+              ...it,
+              stops: (it.stops || []).map((s) => ({ ...s, photos: [] }))
+            }));
+            localStorage.setItem(STORAGE_KEY_SAVED_ITINERARIES, JSON.stringify(lightweight));
+          } catch (_) {
+            console.warn("Spazio localStorage insufficiente", err);
+          }
+        }
+      }
+
+      // Chiamato esclusivamente su click del pulsante 'Salva itinerario'
+      function saveCurrentItineraryExplicitly() {
+        if (!state.stops || !state.stops.length) {
+          showToast("Aggiungi almeno una tappa prima di salvare", "⚠️");
+          return;
+        }
+        if (!state.itineraryId || state.itineraryId === "draft_default") {
+          state.itineraryId = `itin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        }
+        state.isDraftItinerary = false;
+        const snapshot = {
+          id: state.itineraryId,
+          title: state.itineraryTitle || "Itinerario senza titolo",
+          routeColor: state.routeColor,
+          updatedAt: Date.now(),
+          stops: state.stops.map((s) => ({
+            id: s.id,
+            name: s.name,
+            lat: s.lat,
+            lon: s.lon,
+            vehicle: s.vehicle,
+            model: s.model,
+            pauseSec: Number(s.pauseSec) || 4,
+            photos: Array.isArray(s.photos) ? s.photos.slice(0, 3) : [],
+            photoCaption: s.photoCaption || ""
+          }))
+        };
+        const idx = state.savedItineraries.findIndex((it) => it.id === snapshot.id);
+        if (idx >= 0) {
+          state.savedItineraries[idx] = snapshot;
+        } else {
+          state.savedItineraries.unshift(snapshot);
+        }
+        persistSavedItinerariesToStorage();
+        renderSavedItinerariesList();
+        showToast(`Itinerario "${snapshot.title}" salvato in locale`, "💾");
+      }
+
+      function loadSavedItineraryById(id) {
+        const found = state.savedItineraries.find((it) => it.id === id);
+        if (!found) return;
+        closeArrivalPhotoModal(false);
+        state.itineraryId = found.id;
+        state.isDraftItinerary = false;
+        setItineraryTitle(found.title);
+        state.routeColor = found.routeColor || state.routeColor;
+        state.stops = found.stops.map((s) => ({
+          id: s.id || `stop_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          name: s.name,
+          lat: Number(s.lat),
+          lon: Number(s.lon),
+          vehicle: s.vehicle || "automobile",
+          model: s.model || getCategoryObj(s.vehicle || "automobile").models[0].id,
+          pauseSec: Number(s.pauseSec) || 4,
+          photos: Array.isArray(s.photos) ? s.photos.slice(0, 3) : [],
+          photoCaption: s.photoCaption || ""
+        }));
+        state.activeVehicle = state.stops[0]?.vehicle || "automobile";
+        state.activeModel = state.stops[0]?.model || getCategoryObj(state.activeVehicle).models[0].id;
+        state.progress = 0;
+        state.elapsedSec = 0;
+        state.arrivalZoomBoost = 0;
+        state.triggeredArrivalStopIds.clear();
+        state.followCamera = true;
+        state.playing = true;
+        renderVehicleDock();
+        renderModelDock();
+        renderStopsDrawer();
+        renderSavedItinerariesList();
+        showToast(`Caricato itinerario "${found.title}"`, "📂");
+      }
+
+      function deleteSavedItineraryById(id) {
+        state.savedItineraries = state.savedItineraries.filter((it) => it.id !== id);
+        persistSavedItinerariesToStorage();
+        renderSavedItinerariesList();
+        showToast("Itinerario eliminato dall'archivio", "🗑️");
+      }
+
+      function renderSavedItinerariesList() {
+        if (!dom.savedItinerariesList) return;
+        dom.savedItinerariesList.innerHTML = "";
+        if (!state.savedItineraries.length) {
+          const empty = document.createElement("span");
+          empty.className = "text-[11px] font-semibold text-black italic";
+          empty.textContent = "Nessun itinerario salvato. Premi 'Salva itinerario' per conservarlo.";
+          dom.savedItinerariesList.appendChild(empty);
+          return;
+        }
+        state.savedItineraries.forEach((it) => {
+          const isCurrent = it.id === state.itineraryId && !state.isDraftItinerary;
+          const chip = document.createElement("div");
+          chip.className = `flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-xl border text-[11px] shrink-0 transition ${
+            isCurrent
+              ? "bg-amber-200 border-black text-black font-black"
+              : "bg-white hover:bg-[#f1f5f9] border-black/25 text-black font-bold"
+          }`;
+
+          const loadBtn = document.createElement("button");
+          loadBtn.type = "button";
+          loadBtn.className = "truncate max-w-[155px] cursor-pointer text-left text-black";
+          loadBtn.textContent = `${it.title} (${it.stops.length})`;
+          loadBtn.title = `Carica "${it.title}"`;
+          loadBtn.addEventListener("click", () => loadSavedItineraryById(it.id));
+
+          const delBtn = document.createElement("button");
+          delBtn.type = "button";
+          delBtn.className = "w-4 h-4 rounded-full hover:bg-rose-200 text-black text-[10px] font-black flex items-center justify-center cursor-pointer";
+          delBtn.textContent = "✕";
+          delBtn.title = "Elimina itinerario salvato";
+          delBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            deleteSavedItineraryById(it.id);
+          });
+
+          chip.appendChild(loadBtn);
+          chip.appendChild(delBtn);
+          dom.savedItinerariesList.appendChild(chip);
+        });
+      }
+
+      // =========================================================================
+      // 5. UTILITÀ GEOGRAFICHE, PROIEZIONE MERCATOR E ZOOM DIFFERENZIATO PER MEZZO
+      // =========================================================================
+      function clamp(v, min, max) {
+        return Math.max(min, Math.min(max, v));
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function easeInOutCubic(t) {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      }
+
+      function easeOutQuad(t) {
+        return 1 - (1 - t) * (1 - t);
+      }
+
+      function normalizeString(str) {
+        return String(str || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim();
+      }
+
+      function escapeHtml(str) {
+        return String(str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      let toastTimer = null;
+      function showToast(message, icon = "✨") {
+        dom.toastNoticeIcon.textContent = icon;
+        dom.toastNoticeText.textContent = message;
+        dom.toastNotice.classList.remove("hidden");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          dom.toastNotice.classList.add("hidden");
+        }, 3200);
+      }
+
+      function getCategoryObj(catId) {
+        return VEHICLE_CATEGORIES.find((c) => c.id === catId) || VEHICLE_CATEGORIES[2];
+      }
+
+      function getModelObj(catId, modelId) {
+        const cat = getCategoryObj(catId);
+        return cat.models.find((m) => m.id === modelId) || cat.models[0];
+      }
+
+      function setItineraryTitle(newTitle) {
+        const clean = String(newTitle || "").trim() || "Nuovo Itinerario";
+        state.itineraryTitle = clean;
+        if (dom.itineraryTitleInput && dom.itineraryTitleInput.value !== clean) {
+          dom.itineraryTitleInput.value = clean;
+        }
+        if (dom.hudItineraryTitle) {
+          dom.hudItineraryTitle.textContent = clean;
+        }
+      }
+
+      function latLonToWorldPx(lat, lon, zoom) {
+        const clampedLat = clamp(lat, -85.05112878, 85.05112878);
+        const radLat = (clampedLat * Math.PI) / 180;
+        const n = Math.pow(2, zoom);
+        const scale = n * TILE_SIZE * MAP_SCALE_FACTOR;
+        const x = ((lon + 180) / 360) * scale;
+        const y = ((1 - Math.log(Math.tan(radLat) + 1 / Math.cos(radLat)) / Math.PI) / 2) * scale;
+        return { x, y };
+      }
+
+      function worldPxToLatLon(wx, wy, zoom) {
+        const n = Math.pow(2, zoom);
+        const scale = n * TILE_SIZE * MAP_SCALE_FACTOR;
+        const lon = (wx / scale) * 360 - 180;
+        const latRad = Math.atan(Math.sinh(Math.PI * (1 - (2 * wy) / scale)));
+        const lat = clamp((latRad * 180) / Math.PI, -85.05112878, 85.05112878);
+        return { lat, lon };
+      }
+
+      function latLonToScreen(lat, lon, viewW, viewH, zoom) {
+        const centerWorld = latLonToWorldPx(state.centerLat, state.centerLon, zoom);
+        const targetWorld = latLonToWorldPx(lat, lon, zoom);
+        return {
+          x: viewW / 2 + (targetWorld.x - centerWorld.x),
+          y: viewH / 2 + (targetWorld.y - centerWorld.y)
+        };
+      }
+
+      // Ancora esattamente le coordinate del cursore al centro geometrico del viewport (viewW / 2, viewH / 2)
+      function lockCameraToCursor(routeEval) {
+        if (!routeEval) return;
+        state.centerLat = routeEval.lat;
+        state.centerLon = routeEval.lon;
+      }
+
+      function screenToLatLon(sx, sy, viewW, viewH, zoom) {
+        const centerWorld = latLonToWorldPx(state.centerLat, state.centerLon, zoom);
+        const worldX = centerWorld.x + (sx - viewW / 2);
+        const worldY = centerWorld.y + (sy - viewH / 2);
+        return worldPxToLatLon(worldX, worldY, zoom);
+      }
+
+      function haversineKm(lat1, lon1, lat2, lon2) {
+        const R = 6371;
+        const dLat = ((lat2 - lat1) * Math.PI) / 180;
+        const dLon = ((lon2 - lon1) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((lat1 * Math.PI) / 180) *
+            Math.cos((lat2 * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+
+      function getEffectiveZoom() {
+        return clamp(state.baseZoom + state.manualZoomOffset + state.arrivalZoomBoost, MIN_ZOOM, MAX_ZOOM);
+      }
+
+      // Zoom differenziato: vista più ampia dall'alto sulle tratte in Aereo; zoom più ravvicinato per gli altri mezzi
+      function computeAdaptiveLegZoom(distKm, isAir) {
+        const km = Math.max(1, distKm);
+        if (isAir) {
+          const zAir = 6.6 - Math.log2(km) * 0.24;
+          return clamp(zAir, 4.4, 6.1);
+        }
+        const zGround = 14.8 - Math.log2(km) * 0.42;
+        return clamp(zGround, 11.2, 14.0);
+      }
+
+      // Avvicinamento moderato all'arrivo nell'ultimo tratto della tappa (legT > 0.90)
+      function computeArrivalZoomBoost(legT, isAir) {
+        if (legT <= 0.90) return 0;
+        const maxBoost = isAir ? 1.35 : 0.85;
+        if (legT < 0.996) {
+          const p = (legT - 0.90) / 0.096;
+          return maxBoost * easeInOutCubic(clamp(p, 0, 1));
+        }
+        const pOut = (legT - 0.996) / 0.004;
+        return maxBoost * (1 - clamp(pOut, 0, 1));
+      }
+
+      function getControlPoint(p1, p2, isAir) {
+        const mx = (p1.x + p2.x) / 2;
+        const my = (p1.y + p2.y) / 2;
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1) return { x: mx, y: my };
+        const factor = isAir ? 0.24 : 0.07;
+        const nx = -dy / dist;
+        const ny = dx / dist;
+        return {
+          x: mx + nx * dist * factor,
+          y: my + ny * dist * factor
+        };
+      }
+
+      function evalQuadBezier(p0, p1, p2, t) {
+        const inv = 1 - t;
+        return {
+          x: inv * inv * p0.x + 2 * inv * t * p1.x + t * t * p2.x,
+          y: inv * inv * p0.y + 2 * inv * t * p1.y + t * t * p2.y
+        };
+      }
+
+      function evalQuadBezierTangent(p0, p1, p2, t) {
+        return {
+          x: 2 * (1 - t) * (p1.x - p0.x) + 2 * t * (p2.x - p1.x),
+          y: 2 * (1 - t) * (p1.y - p0.y) + 2 * t * (p2.y - p1.y)
+        };
+      }
+
+      // =========================================================================
+      // 6. RICERCA AUTOMATICA LUOGHI (NOMINATIM + ARCHIVIO)
+      // =========================================================================
+      let placeSearchDebounce = null;
+      let activePlaceSearchController = null;
+
+      function findLocalPlaceCandidates(query) {
+        const norm = normalizeString(query);
+        if (!norm) return [];
+        const matches = [];
+        for (const city of CITIES_DB) {
+          const cname = normalizeString(city.name);
+          const calias = (city.aliases || []).map(normalizeString);
+          const region = normalizeString(city.region || "");
+          const country = normalizeString(city.country || "");
+          const exact = cname === norm || calias.includes(norm);
+          const partial =
+            cname.includes(norm) ||
+            calias.some((a) => a.includes(norm)) ||
+            `${cname} ${region} ${country}`.includes(norm);
+          if (exact || partial) {
+            matches.push({
+              name: city.name,
+              subtitle: [city.region, city.country].filter(Boolean).join(", "),
+              lat: city.lat,
+              lon: city.lon,
+              score: exact ? 100 : 60,
+              source: "Archivio"
+            });
+          }
+        }
+        return matches.sort((a, b) => b.score - a.score);
+      }
+
+      function resolveCityInstant(query) {
+        const norm = normalizeString(query);
+        if (!norm) return null;
+
+        const coordMatch = query.trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+        if (coordMatch) {
+          const lat = parseFloat(coordMatch[1]);
+          const lon = parseFloat(coordMatch[2]);
+          if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+            return { name: `Punto (${lat.toFixed(2)}, ${lon.toFixed(2)})`, lat, lon };
+          }
+        }
+
+        const localHits = findLocalPlaceCandidates(query);
+        if (localHits.length) {
+          return { name: localHits[0].name, lat: localHits[0].lat, lon: localHits[0].lon };
+        }
+        return null;
+      }
+
+      async function searchPlaceCandidatesWorldwide(query, silent = false) {
+        const trimmed = String(query || "").trim();
+        if (!trimmed) return [];
+
+        const localHits = findLocalPlaceCandidates(trimmed);
+
+        if (activePlaceSearchController) {
+          try {
+            activePlaceSearchController.abort();
+          } catch (_) {}
+        }
+        activePlaceSearchController = new AbortController();
+
+        const remoteHits = [];
+        try {
+          const timeoutId = setTimeout(() => {
+            try {
+              activePlaceSearchController.abort();
+            } catch (_) {}
+          }, 3200);
+
+          const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&accept-language=it&q=${encodeURIComponent(trimmed)}`;
+          const res = await fetch(url, {
+            headers: { Accept: "application/json" },
+            signal: activePlaceSearchController.signal
+          });
+          clearTimeout(timeoutId);
+
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+              for (const item of data) {
+                const lat = parseFloat(item.lat);
+                const lon = parseFloat(item.lon);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+                const addr = item.address || {};
+                const primaryName =
+                  item.name ||
+                  addr.city ||
+                  addr.town ||
+                  addr.village ||
+                  addr.municipality ||
+                  (item.display_name ? item.display_name.split(",")[0].trim() : trimmed);
+                const subParts = [
+                  addr.county || addr.province || addr.state || addr.region,
+                  addr.country
+                ].filter(Boolean);
+                const subtitle = subParts.length
+                  ? subParts.join(", ")
+                  : (item.display_name || "").split(",").slice(1, 3).join(",").trim();
+
+                remoteHits.push({
+                  name: primaryName,
+                  subtitle: subtitle || `${lat.toFixed(3)}, ${lon.toFixed(3)}`,
+                  lat,
+                  lon,
+                  source: "Nominatim"
+                });
+              }
+            }
+          }
+        } catch (err) {
+          if (!silent && err && err.name !== "AbortError") {
+            console.warn("Ricerca Nominatim non disponibile:", err);
+          }
+        }
+
+        const merged = [];
+        const addUnique = (cand) => {
+          const isDup = merged.some(
+            (m) =>
+              normalizeString(m.name) === normalizeString(cand.name) &&
+              Math.abs(m.lat - cand.lat) < 0.08 &&
+              Math.abs(m.lon - cand.lon) < 0.08
+          );
+          if (!isDup) merged.push(cand);
+        };
+
+        remoteHits.forEach(addUnique);
+        localHits.forEach(addUnique);
+        return merged.slice(0, 8);
+      }
+
+      function renderPlaceCandidates(query, candidates, loading = false) {
+        if (!query || !query.trim()) {
+          dom.placeCandidatesBox.classList.add("hidden");
+          return;
+        }
+        dom.placeCandidatesBox.classList.remove("hidden");
+        dom.placeCandidatesTitle.textContent = loading
+          ? `Ricerca "${query}"...`
+          : `Luoghi suggeriti per "${query}" (${candidates.length})`;
+
+        dom.placeCandidatesList.innerHTML = "";
+        if (!candidates.length) {
+          const empty = document.createElement("div");
+          empty.className = "px-2 py-2 text-[11px] font-semibold text-black italic";
+          empty.textContent = loading
+            ? "Ricerca in corso..."
+            : "Nessun luogo trovato. Prova ad aggiungere regione o nazione.";
+          dom.placeCandidatesList.appendChild(empty);
+          return;
+        }
+
+        candidates.forEach((cand) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className =
+            "w-full px-2.5 py-2 rounded-xl bg-[#f8fafc] hover:bg-rose-100 border border-black/25 text-left flex items-center justify-between gap-2 transition cursor-pointer";
+          btn.innerHTML = `
+            <div class="min-w-0">
+              <div class="text-xs font-black text-black truncate">📍 ${escapeHtml(cand.name)}</div>
+              <div class="text-[10px] font-semibold text-black truncate">${escapeHtml(cand.subtitle || "Località")}</div>
+            </div>
+            <div class="text-[9px] font-mono text-black shrink-0 text-right">
+              <div>${cand.lat.toFixed(2)}, ${cand.lon.toFixed(2)}</div>
+              <div class="text-black font-black">+ Aggiungi</div>
+            </div>
+          `;
+          btn.addEventListener("click", () => {
+            addStop(cand.name, cand.lat, cand.lon);
+            dom.citySearchInput.value = "";
+            dom.placeCandidatesBox.classList.add("hidden");
+          });
+          dom.placeCandidatesList.appendChild(btn);
+        });
+      }
+
+      // =========================================================================
+      // 7. IMPORTAZIONE DA PDF, EXCEL/CSV, TXT, JSON O TESTO LIBERO
+      // =========================================================================
+      function detectVehicleFromSegment(segmentText) {
+        const norm = normalizeString(segmentText);
+        for (const cat of VEHICLE_CATEGORIES) {
+          for (const kw of cat.keywords) {
+            const re = new RegExp(`\\b${kw.replace(/\s+/g, "\\s+")}\\b`, "i");
+            if (re.test(norm)) {
+              return { vehicle: cat.id, model: cat.models[0].id };
+            }
+          }
+        }
+        return null;
+      }
+
+      function parseDelimitedTextRows(rawText) {
+        const lines = String(rawText || "")
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        return lines.map((line) => {
+          if (line.includes("\t")) return line.split("\t").map((c) => c.trim());
+          if (line.includes(";")) return line.split(";").map((c) => c.trim());
+          if (line.includes(",")) return line.split(",").map((c) => c.trim());
+          return [line];
+        });
+      }
+
+      function parseTableRowsToStops(rows) {
+        if (!Array.isArray(rows) || !rows.length) return [];
+        const extracted = [];
+
+        let cityCol = 0;
+        let latCol = -1;
+        let lonCol = -1;
+        let vehicleCol = -1;
+        let startRow = 0;
+
+        const firstRowNorm = rows[0].map((c) => normalizeString(c));
+        const hasHeader = firstRowNorm.some((c) =>
+          ["citta", "city", "tappa", "luogo", "destination", "stop", "mezzo", "trasporto", "lat", "lon"].includes(c)
+        );
+
+        if (hasHeader) {
+          startRow = 1;
+          firstRowNorm.forEach((col, idx) => {
+            if (["citta", "city", "tappa", "luogo", "destination", "stop", "localita", "paese"].includes(col)) cityCol = idx;
+            if (["lat", "latitude", "latitudine"].includes(col)) latCol = idx;
+            if (["lon", "lng", "longitude", "longitudine"].includes(col)) lonCol = idx;
+            if (["mezzo", "trasporto", "vehicle", "transport", "veicolo"].includes(col)) vehicleCol = idx;
+          });
+        }
+
+        let currentVehicle = state.activeVehicle;
+        let currentModel = state.activeModel;
+
+        for (let r = startRow; r < rows.length; r++) {
+          const row = rows[r];
+          if (!row || !row.length) continue;
+
+          const rowJoined = row.join(" ");
+          const vehFromRow =
+            (vehicleCol >= 0 ? detectVehicleFromSegment(row[vehicleCol]) : null) ||
+            detectVehicleFromSegment(rowJoined);
+          if (vehFromRow) {
+            currentVehicle = vehFromRow.vehicle;
+            currentModel = vehFromRow.model;
+          }
+
+          let candidateCity = String(row[cityCol] || "").trim();
+          if (!candidateCity) {
+            candidateCity = String(row.find((cell) => String(cell || "").trim().length > 1) || "").trim();
+          }
+          if (!candidateCity) continue;
+
+          const latVal = latCol >= 0 ? parseFloat(String(row[latCol]).replace(",", ".")) : NaN;
+          const lonVal = lonCol >= 0 ? parseFloat(String(row[lonCol]).replace(",", ".")) : NaN;
+
+          if (Number.isFinite(latVal) && Number.isFinite(lonVal) && Math.abs(latVal) <= 90 && Math.abs(lonVal) <= 180) {
+            extracted.push({
+              id: `imp_${Date.now()}_${r}`,
+              name: candidateCity,
+              lat: latVal,
+              lon: lonVal,
+              vehicle: currentVehicle,
+              model: currentModel,
+              pauseSec: 4,
+              photos: [],
+              photoCaption: ""
+            });
+            continue;
+          }
+
+          const resolved = resolveCityInstant(candidateCity);
+          if (resolved) {
+            extracted.push({
+              id: `imp_${Date.now()}_${r}`,
+              name: resolved.name,
+              lat: resolved.lat,
+              lon: resolved.lon,
+              vehicle: currentVehicle,
+              model: currentModel,
+              pauseSec: 4,
+              photos: [],
+              photoCaption: ""
+            });
+          } else {
+            const subStops = extractStopsFromText(rowJoined);
+            subStops.forEach((s) => extracted.push(s));
+          }
+        }
+
+        return extracted;
+      }
+
+      async function extractTextFromPdfFile(file) {
+        if (!window.pdfjsLib) {
+          throw new Error("Libreria PDF.js non disponibile.");
+        }
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pageTexts = [];
+        for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+          const page = await pdfDoc.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          const lineStr = textContent.items.map((item) => item.str).join(" ");
+          pageTexts.push(lineStr);
+        }
+        return pageTexts.join("\n");
+      }
+
+      function extractStopsFromText(rawText) {
+        const text = String(rawText || "").trim();
+        if (!text) return [];
+
+        if (text.startsWith("{") || text.startsWith("[")) {
+          try {
+            const parsed = JSON.parse(text);
+            const arr = Array.isArray(parsed) ? parsed : parsed.stops;
+            if (Array.isArray(arr)) {
+              const valid = arr
+                .filter((s) => s && typeof s.name === "string" && Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lon)))
+                .map((s, idx) => {
+                  const cat = getCategoryObj(s.vehicle || "automobile");
+                  const mod = getModelObj(cat.id, s.model);
+                  return {
+                    id: `json_${Date.now()}_${idx}`,
+                    name: s.name.trim(),
+                    lat: Number(s.lat),
+                    lon: Number(s.lon),
+                    vehicle: cat.id,
+                    model: mod.id,
+                    pauseSec: Number(s.pauseSec) || 4,
+                    photos: Array.isArray(s.photos) ? s.photos.slice(0, 3) : [],
+                    photoCaption: s.photoCaption || ""
+                  };
+                });
+              if (valid.length) return valid;
+            }
+          } catch (_) {
+            // Prosegue con estrazione testuale
+          }
+        }
+
+        const normText = normalizeString(text);
+        const foundMentions = [];
+
+        for (const city of CITIES_DB) {
+          const terms = [city.name, ...(city.aliases || [])].map(normalizeString).filter(Boolean);
+          for (const term of terms) {
+            const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const regex = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "g");
+            let match;
+            while ((match = regex.exec(normText)) !== null) {
+              const pos = match.index + match[1].length;
+              foundMentions.push({ pos, len: term.length, city });
+            }
+          }
+        }
+
+        foundMentions.sort((a, b) => a.pos - b.pos || b.len - a.len);
+
+        const orderedMentions = [];
+        for (const m of foundMentions) {
+          const prev = orderedMentions[orderedMentions.length - 1];
+          if (prev && m.pos < prev.pos + prev.len) continue;
+          if (prev && prev.city.name === m.city.name && Math.abs(prev.city.lat - m.city.lat) < 0.05) continue;
+          orderedMentions.push(m);
+        }
+
+        let currentVehicle = state.activeVehicle;
+        let currentModel = state.activeModel;
+
+        return orderedMentions.map((m, idx) => {
+          const contextStart = idx === 0 ? Math.max(0, m.pos - 45) : orderedMentions[idx - 1].pos + orderedMentions[idx - 1].len;
+          const contextEnd = Math.min(normText.length, m.pos + m.len + 25);
+          const snippet = normText.slice(contextStart, contextEnd);
+
+          const detected = detectVehicleFromSegment(snippet);
+          if (detected) {
+            currentVehicle = detected.vehicle;
+            currentModel = detected.model;
+          }
+
+          return {
+            id: `txt_${Date.now()}_${idx}`,
+            name: m.city.name,
+            lat: m.city.lat,
+            lon: m.city.lon,
+            vehicle: currentVehicle,
+            model: currentModel,
+            pauseSec: 4,
+            photos: [],
+            photoCaption: ""
+          };
+        });
+      }
+
+      function updateImportPreview(stops) {
+        state.parsedImportStops = stops;
+        dom.parsedCountBadge.textContent = `${stops.length} ${stops.length === 1 ? "tappa" : "tappe"}`;
+        dom.replaceItineraryBtn.disabled = stops.length < 2;
+        dom.appendItineraryBtn.disabled = stops.length < 1;
+
+        if (!stops.length) {
+          dom.importPreviewList.innerHTML =
+            '<p class="italic text-black">Carica un file PDF, Excel, CSV, TXT/JSON oppure incolla un testo...</p>';
+          return;
+        }
+
+        dom.importPreviewList.innerHTML = stops
+          .map((s, idx) => {
+            const cat = getCategoryObj(s.vehicle);
+            const mod = getModelObj(s.vehicle, s.model);
+            return `
+              <div class="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-white border border-black/20">
+                <div class="truncate">
+                  <span class="font-black text-black">${idx + 1}.</span>
+                  <span class="font-bold text-black">${escapeHtml(s.name)}</span>
+                </div>
+                <span class="text-[10px] font-extrabold text-black shrink-0">${cat.label} · ${mod.label}</span>
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      // =========================================================================
+      // 8. GALLERIA FOTO (1-3 FOTO) ALL'ARRIVO SULLA TAPPA
+      // =========================================================================
+      function readImageFileAsCompressedDataUrl(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+              const maxSide = 1280;
+              let w = img.width;
+              let h = img.height;
+              if (w > maxSide || h > maxSide) {
+                if (w >= h) {
+                  h = Math.round((h * maxSide) / w);
+                  w = maxSide;
+                } else {
+                  w = Math.round((w * maxSide) / h);
+                  h = maxSide;
+                }
+              }
+              const off = document.createElement("canvas");
+              off.width = w;
+              off.height = h;
+              const octx = off.getContext("2d");
+              octx.drawImage(img, 0, 0, w, h);
+              resolve(off.toDataURL("image/jpeg", 0.82));
+            };
+            img.onerror = reject;
+            img.src = ev.target.result;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function renderArrivalPhotoStage() {
+        const stop = state.photoModalStop;
+        if (!stop || !stop.photos || !stop.photos.length) return;
+        const photos = stop.photos;
+        const count = photos.length;
+
+        dom.photoOverlayItineraryTitle.textContent = state.itineraryTitle;
+        dom.photoOverlayStopName.textContent = stop.name;
+        dom.photoOverlayCaption.textContent = stop.photoCaption || `Ricordo della tappa ${stop.name}`;
+        dom.photoOverlayCounter.textContent =
+          count === 1 ? "1 foto" : `${(state.photoModalIndex % count) + 1} / ${count} foto`;
+
+        dom.photoOverlayStage.innerHTML = "";
+        dom.photoOverlayStage.classList.remove("photo-reveal");
+        void dom.photoOverlayStage.offsetWidth;
+        dom.photoOverlayStage.classList.add("photo-reveal");
+
+        if (count === 1) {
+          dom.photoOverlayStage.className = "photo-reveal flex-1 my-3 min-h-0 grid grid-cols-1 gap-3";
+        } else if (count === 2) {
+          dom.photoOverlayStage.className = "photo-reveal flex-1 my-3 min-h-0 grid grid-cols-1 sm:grid-cols-2 gap-3";
+        } else {
+          dom.photoOverlayStage.className = "photo-reveal flex-1 my-3 min-h-0 grid grid-cols-1 sm:grid-cols-3 gap-3";
+        }
+
+        photos.forEach((src, idx) => {
+          const isHighlighted = idx === state.photoModalIndex % count;
+          const card = document.createElement("div");
+          card.className = `relative rounded-2xl overflow-hidden border transition-all bg-white flex items-center justify-center min-h-0 shadow-md ${
+            isHighlighted ? "border-black ring-2 ring-black/40" : "border-black/25 opacity-95"
+          }`;
+          card.innerHTML = `
+            <img src="${src}" alt="${escapeHtml(stop.name)} foto ${idx + 1}" class="w-full h-full object-cover" />
+            <div class="absolute bottom-2 left-2 px-2.5 py-0.5 rounded-full bg-white/95 text-[10px] font-black text-black border border-black/30">
+              Foto ${idx + 1}
+            </div>
+          `;
+          card.addEventListener("click", () => {
+            state.photoModalIndex = idx;
+            renderArrivalPhotoStage();
+          });
+          dom.photoOverlayStage.appendChild(card);
+        });
+      }
+
+      function clearPhotoAutoTimer() {
+        if (state.photoAutoTimer) {
+          clearInterval(state.photoAutoTimer);
+          state.photoAutoTimer = null;
+        }
+      }
+
+      function startPhotoAutoCountdown(totalSec) {
+        clearPhotoAutoTimer();
+        state.photoAutoRemainingSec = totalSec;
+        dom.photoAutoCountdown.textContent = dom.photoAutoAdvanceToggle.checked
+          ? `Prosegue tra ${state.photoAutoRemainingSec}s`
+          : "Ripresa manuale";
+
+        state.photoAutoTimer = setInterval(() => {
+          if (state.photoModalPaused || !dom.photoAutoAdvanceToggle.checked) {
+            dom.photoAutoCountdown.textContent = state.photoModalPaused
+              ? "In pausa sulle foto"
+              : "Ripresa manuale";
+            return;
+          }
+          state.photoAutoRemainingSec -= 1;
+          if (state.photoAutoRemainingSec <= 0) {
+            closeArrivalPhotoModal(true);
+            return;
+          }
+          if (state.photoModalStop && state.photoModalStop.photos.length > 1) {
+            state.photoModalIndex = (state.photoModalIndex + 1) % state.photoModalStop.photos.length;
+            renderArrivalPhotoStage();
+          }
+          dom.photoAutoCountdown.textContent = `Prosegue tra ${state.photoAutoRemainingSec}s`;
+        }, 1000);
+      }
+
+      function openArrivalPhotoModal(stop) {
+        if (!stop || !stop.photos || !stop.photos.length) return;
+        state.photoModalOpen = true;
+        state.photoModalPaused = false;
+        state.photoModalStop = stop;
+        state.photoModalIndex = 0;
+        state.playing = false;
+
+        dom.togglePhotoPauseBtn.textContent = "⏸ Pausa slide";
+        dom.arrivalPhotoOverlay.classList.remove("hidden");
+        renderArrivalPhotoStage();
+
+        const durationSec = clamp(Number(stop.pauseSec) || Math.max(3, stop.photos.length * 2 + 1), 2, 20);
+        startPhotoAutoCountdown(durationSec);
+      }
+
+      function closeArrivalPhotoModal(resumeRoute = true) {
+        clearPhotoAutoTimer();
+        state.photoModalOpen = false;
+        state.photoModalPaused = false;
+        state.photoModalStop = null;
+        dom.arrivalPhotoOverlay.classList.add("hidden");
+        if (resumeRoute) {
+          state.playing = true;
+        }
+      }
+
+      // =========================================================================
+      // 9. VALUTAZIONE PERCORSO, VELOCITÀ E TELECAMERA CENTRATA SUL CURSORE
+      // =========================================================================
+      function evaluateRouteAt(progress) {
+        const stops = state.stops;
+        const n = stops.length;
+
+        if (n === 0) {
+          return {
+            lat: state.centerLat,
+            lon: state.centerLon,
+            heading: 0,
+            vehicle: state.activeVehicle,
+            model: state.activeModel,
+            isAir: state.activeVehicle === "aereo",
+            legIndex: 0,
+            totalLegs: 0,
+            legT: 0,
+            legDistKm: 120,
+            isArriving: false,
+            arrivedStop: null,
+            fromName: "Nessuna tappa",
+            toName: "",
+            traveledKm: 0,
+            totalKm: 0
+          };
+        }
+
+        if (n === 1) {
+          const s0 = stops[0];
+          const cat0 = getCategoryObj(s0.vehicle || state.activeVehicle);
+          return {
+            lat: s0.lat,
+            lon: s0.lon,
+            heading: 0,
+            vehicle: cat0.id,
+            model: s0.model || state.activeModel,
+            isAir: cat0.isAir,
+            legIndex: 0,
+            totalLegs: 0,
+            legT: 0,
+            legDistKm: 50,
+            isArriving: false,
+            arrivedStop: null,
+            fromName: s0.name,
+            toName: s0.name,
+            traveledKm: 0,
+            totalKm: 0
+          };
+        }
+
+        const totalLegs = n - 1;
+        const legDistances = [];
+        let totalKm = 0;
+        for (let i = 0; i < totalLegs; i++) {
+          const d = haversineKm(stops[i].lat, stops[i].lon, stops[i + 1].lat, stops[i + 1].lon);
+          legDistances.push(d);
+          totalKm += d;
+        }
+
+        const p = clamp(progress, 0, 1);
+        const scaled = p * totalLegs;
+        const legIndex = Math.min(Math.floor(scaled), totalLegs - 1);
+        const legT = p >= 1 ? 1 : scaled - legIndex;
+
+        let traveledKm = 0;
+        for (let i = 0; i < legIndex; i++) traveledKm += legDistances[i];
+        traveledKm += legDistances[legIndex] * legT;
+
+        const sA = stops[legIndex];
+        const sB = stops[legIndex + 1];
+        const cat = getCategoryObj(sA.vehicle || state.activeVehicle);
+        const mod = getModelObj(cat.id, sA.model || state.activeModel);
+
+        const refZoom = 6;
+        const pA = latLonToWorldPx(sA.lat, sA.lon, refZoom);
+        const pB = latLonToWorldPx(sB.lat, sB.lon, refZoom);
+        const ctrl = getControlPoint(pA, pB, cat.isAir);
+
+        const posWorld = evalQuadBezier(pA, ctrl, pB, legT);
+        const tanWorld = evalQuadBezierTangent(pA, ctrl, pB, legT);
+        const geo = worldPxToLatLon(posWorld.x, posWorld.y, refZoom);
+        const heading = Math.atan2(tanWorld.y, tanWorld.x);
+
+        const isArriving = legT > 0.90;
+        const arrivedStop = legT >= 0.992 ? sB : null;
+
+        return {
+          lat: geo.lat,
+          lon: geo.lon,
+          heading,
+          vehicle: cat.id,
+          model: mod.id,
+          isAir: cat.isAir,
+          legIndex,
+          totalLegs,
+          legT,
+          legDistKm: legDistances[legIndex],
+          isArriving,
+          arrivedStop,
+          fromName: sA.name,
+          toName: sB.name,
+          traveledKm,
+          totalKm
+        };
+      }
+
+      function getSpeedMultiplierAt(legT) {
+        if (legT > 0.90) {
+          const p = clamp((legT - 0.90) / 0.10, 0, 1);
+          return lerp(1.0, 0.34, easeOutQuad(p));
+        }
+        return 1.0;
+      }
+
+      // =========================================================================
+      // 10. RENDERING MAPPA VETTORIALE + TILE LIBERI CON CONTROLLO ANTI-PLACEHOLDER + CURSORE PURO
+      // =========================================================================
+      function isValidFreeTileImage(img) {
+        if (!img) return false;
+        const w = img.naturalWidth || 0;
+        const h = img.naturalHeight || 0;
+        if (w < 64 || h < 64) return false;
+        // Scarta eventuali tile segnaposto anomali o non quadrati
+        if (Math.abs(w - h) > 4) return false;
+        return true;
+      }
+
+      function getOrLoadTile(z, tx, ty) {
+        const themeKey = state.mapTheme || "osm";
+        const key = `${themeKey}/${z}/${tx}/${ty}`;
+        if (state.tileCache.has(key)) {
+          const existing = state.tileCache.get(key);
+          state.tileCache.delete(key);
+          state.tileCache.set(key, existing);
+          return existing;
+        }
+
+        if (state.tileCache.size >= MAX_TILE_CACHE_ENTRIES) {
+          const oldestKey = state.tileCache.keys().next().value;
+          if (oldestKey) state.tileCache.delete(oldestKey);
+        }
+
+        const providers = FREE_TILE_PROVIDERS[themeKey] || [];
+        const entry = { img: new Image(), ready: false, error: false, providerIdx: 0 };
+
+        if (!providers.length) {
+          entry.error = true;
+          state.tileCache.set(key, entry);
+          return entry;
+        }
+
+        entry.img.crossOrigin = "anonymous";
+        let timeoutHandle = null;
+
+        const scheduleFallback = () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (entry.providerIdx + 1 < providers.length) {
+            entry.providerIdx += 1;
+            loadFromCurrentProvider();
+          } else {
+            entry.error = true;
+          }
+        };
+
+        const loadFromCurrentProvider = () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          timeoutHandle = setTimeout(scheduleFallback, TILE_TIMEOUT_MS);
+          try {
+            entry.img.src = providers[entry.providerIdx](z, tx, ty);
+          } catch (_) {
+            scheduleFallback();
+          }
+        };
+
+        entry.img.onload = () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (isValidFreeTileImage(entry.img)) {
+            entry.ready = true;
+            state.loadedTiles++;
+          } else {
+            scheduleFallback();
+          }
+        };
+
+        entry.img.onerror = () => {
+          scheduleFallback();
+        };
+
+        loadFromCurrentProvider();
+        state.tileCache.set(key, entry);
+        return entry;
+      }
+
+      // Disegno cartografico vettoriale continuo (masse continentali/coste, griglia lat/lon, etichette geografiche)
+      function renderVectorMapLayer(viewW, viewH, zoom, hasAnyTileDrawn = false) {
+        ctx.fillStyle = "#cfe8fc";
+        ctx.fillRect(0, 0, viewW, viewH);
+
+        // Griglia di latitudine e longitudine
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.14)";
+        ctx.lineWidth = 1;
+        const lonStep = zoom >= 9 ? 2 : zoom >= 6 ? 5 : 15;
+        const latStep = zoom >= 9 ? 2 : zoom >= 6 ? 5 : 15;
+
+        for (let lon = -180; lon <= 180; lon += lonStep) {
+          const pTop = latLonToScreen(82, lon, viewW, viewH, zoom);
+          const pBot = latLonToScreen(-82, lon, viewW, viewH, zoom);
+          if (pTop.x < -40 || pTop.x > viewW + 40) continue;
+          ctx.beginPath();
+          ctx.moveTo(pTop.x, pTop.y);
+          ctx.lineTo(pBot.x, pBot.y);
+          ctx.stroke();
+        }
+        for (let lat = -75; lat <= 75; lat += latStep) {
+          const pL = latLonToScreen(lat, -180, viewW, viewH, zoom);
+          const pR = latLonToScreen(lat, 180, viewW, viewH, zoom);
+          if (pL.y < -40 || pL.y > viewH + 40) continue;
+          ctx.beginPath();
+          ctx.moveTo(pL.x, pL.y);
+          ctx.lineTo(pR.x, pR.y);
+          ctx.stroke();
+        }
+
+        // Masse continentali e linee di costa
+        ctx.fillStyle = "#e8f3dc";
+        ctx.strokeStyle = "#334155";
+        ctx.lineWidth = 1.65;
+
+        for (const poly of CONTINENTS_POLYGONS) {
+          ctx.beginPath();
+          poly.forEach(([lon, lat], idx) => {
+            const pt = latLonToScreen(lat, lon, viewW, viewH, zoom);
+            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
+          });
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+
+        // Corridoi geografici terrestri
+        ctx.save();
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.24)";
+        ctx.lineWidth = zoom >= 9 ? 2.2 : 1.4;
+        ctx.setLineDash([6, 5]);
+        for (const corridor of VECTOR_CORRIDORS) {
+          ctx.beginPath();
+          corridor.forEach(([lon, lat], idx) => {
+            const pt = latLonToScreen(lat, lon, viewW, viewH, zoom);
+            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
+          });
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        // Etichette geografiche di riferimento
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.font = "700 11px Inter, sans-serif";
+        for (const city of CITIES_DB) {
+          const pt = latLonToScreen(city.lat, city.lon, viewW, viewH, zoom);
+          if (pt.x < -70 || pt.x > viewW + 70 || pt.y < -30 || pt.y > viewH + 30) continue;
+          ctx.fillStyle = "#000000";
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 2.3, 0, Math.PI * 2);
+          ctx.fill();
+          if (zoom >= 4.0) {
+            ctx.fillText(city.name, pt.x + 5, pt.y);
+          }
+        }
+
+        if (dom.hudSourceStatus && !hasAnyTileDrawn) {
+          dom.hudSourceStatus.textContent = "● Mappa Vettoriale HD";
+        }
+      }
+
+      function renderFreeTilesLayer(viewW, viewH, zoom) {
+        if ((state.mapTheme || "osm") === "vector") {
+          if (dom.hudSourceStatus) dom.hudSourceStatus.textContent = "● Mappa Vettoriale HD";
+          return 0;
+        }
+
+        const tileZ = clamp(Math.round(zoom), 2, 18);
+        const scaleDiff = Math.pow(2, zoom - tileZ);
+        const renderTilePx = TILE_SIZE * MAP_SCALE_FACTOR * scaleDiff;
+        const maxTileIndex = Math.pow(2, tileZ);
+
+        const centerWorld = latLonToWorldPx(state.centerLat, state.centerLon, zoom);
+        const topLeftWorldX = centerWorld.x - viewW / 2;
+        const topLeftWorldY = centerWorld.y - viewH / 2;
+
+        const minTileX = Math.floor(topLeftWorldX / renderTilePx) - 1;
+        const maxTileX = Math.floor((topLeftWorldX + viewW) / renderTilePx) + 1;
+        const minTileY = Math.max(0, Math.floor(topLeftWorldY / renderTilePx) - 1);
+        const maxTileY = Math.min(maxTileIndex - 1, Math.floor((topLeftWorldY + viewH) / renderTilePx) + 1);
+
+        let drawnCount = 0;
+        for (let tx = minTileX; tx <= maxTileX; tx++) {
+          const wrappedX = ((tx % maxTileIndex) + maxTileIndex) % maxTileIndex;
+          for (let ty = minTileY; ty <= maxTileY; ty++) {
+            const tile = getOrLoadTile(tileZ, wrappedX, ty);
+            const screenX = Math.floor(tx * renderTilePx - topLeftWorldX);
+            const screenY = Math.floor(ty * renderTilePx - topLeftWorldY);
+            const size = Math.ceil(renderTilePx) + 1;
+
+            if (tile.ready && isValidFreeTileImage(tile.img)) {
+              try {
+                ctx.drawImage(tile.img, screenX, screenY, size, size);
+                drawnCount++;
+              } catch (_) {
+                // Ignora tile non disegnabile e mantiene la mappa vettoriale
+              }
+            }
+          }
+        }
+
+        if (dom.hudSourceStatus && drawnCount > 0) {
+          dom.hudSourceStatus.textContent =
+            state.mapTheme === "wikimedia" ? "● Wikimedia Maps Attiva" : "● OpenStreetMap Attiva";
+        }
+        return drawnCount;
+      }
+
+      // Disegno dei 15 modelli dettagliati come cursore puro (senza cerchio intorno)
+      function drawCursorVehicleModel(ctx, vehicleId, modelId, heading, isAir) {
+        const mod = getModelObj(vehicleId, modelId);
+
+        ctx.save();
+        ctx.rotate(heading);
+
+        ctx.save();
+        ctx.translate(isAir ? 13 : 4, isAir ? 17 : 5);
+        ctx.fillStyle = isAir ? "rgba(0, 0, 0, 0.26)" : "rgba(0, 0, 0, 0.34)";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, isAir ? 17 : 15, isAir ? 8 : 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+
+        if (vehicleId === "aereo") {
+          if (modelId === "airliner") {
+            ctx.fillStyle = mod.detail;
+            ctx.beginPath();
+            ctx.moveTo(-2, -3);
+            ctx.lineTo(-10, -24);
+            ctx.lineTo(-4, -24);
+            ctx.lineTo(8, -3);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(-2, 3);
+            ctx.lineTo(-10, 24);
+            ctx.lineTo(-4, 24);
+            ctx.lineTo(8, 3);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = mod.accent;
+            ctx.beginPath();
+            ctx.moveTo(-16, 0);
+            ctx.lineTo(-22, -10);
+            ctx.lineTo(-17, -10);
+            ctx.lineTo(-12, 0);
+            ctx.lineTo(-17, 10);
+            ctx.lineTo(-22, 10);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = mod.primary;
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.moveTo(22, 0);
+            ctx.quadraticCurveTo(15, -5, -18, -3.5);
+            ctx.lineTo(-21, 0);
+            ctx.lineTo(-18, 3.5);
+            ctx.quadraticCurveTo(15, 5, 22, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "#000000";
+            ctx.beginPath();
+            ctx.ellipse(13, 0, 3.5, 1.8, 0, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (modelId === "private_jet") {
+            ctx.fillStyle = mod.primary;
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(6, 0);
+            ctx.lineTo(-12, -21);
+            ctx.lineTo(-16, -19);
+            ctx.lineTo(-5, 0);
+            ctx.lineTo(-16, 19);
+            ctx.lineTo(-12, 21);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = mod.accent;
+            ctx.beginPath();
+            ctx.moveTo(23, 0);
+            ctx.quadraticCurveTo(12, -4, -19, -3);
+            ctx.lineTo(-22, 0);
+            ctx.lineTo(-19, 3);
+            ctx.quadraticCurveTo(12, 4, 23, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "#38bdf8";
+            ctx.beginPath();
+            ctx.ellipse(12, 0, 4, 1.8, 0, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillStyle = mod.accent;
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(-4, -21, 9, 42);
+            ctx.strokeRect(-4, -21, 9, 42);
+
+            ctx.fillStyle = mod.primary;
+            ctx.beginPath();
+            ctx.moveTo(16, 0);
+            ctx.lineTo(8, -4.5);
+            ctx.lineTo(-17, -3);
+            ctx.lineTo(-17, 3);
+            ctx.lineTo(8, 4.5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(18, -8);
+            ctx.lineTo(18, 8);
+            ctx.stroke();
+          }
+        } else if (vehicleId === "bus") {
+          ctx.fillStyle = mod.primary;
+          ctx.strokeStyle = "#000000";
+          ctx.lineWidth = 1.7;
+          ctx.beginPath();
+          ctx.roundRect(-20, -9, 40, 18, 4);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = mod.detail;
+          ctx.fillRect(-13, -6.5, 25, 13);
+
+          ctx.fillStyle = mod.accent;
+          ctx.beginPath();
+          ctx.roundRect(14, -7, 4.5, 14, 2);
+          ctx.fill();
+
+          if (modelId === "double_decker") {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(-10, -4.5, 19, 9);
+            ctx.strokeStyle = mod.primary;
+            ctx.lineWidth = 1.2;
+            ctx.strokeRect(-10, -4.5, 19, 9);
+          } else if (modelId === "minibus") {
+            ctx.fillStyle = mod.accent;
+            ctx.fillRect(-9, -5.5, 14, 11);
+          }
+        } else if (vehicleId === "automobile") {
+          ctx.fillStyle = mod.primary;
+          ctx.strokeStyle = "#000000";
+          ctx.lineWidth = 1.7;
+          ctx.beginPath();
+          ctx.roundRect(-16, -8.5, 32, 17, 5);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = mod.detail;
+          ctx.beginPath();
+          ctx.roundRect(-7, -6.5, 16, 13, 3);
+          ctx.fill();
+
+          if (modelId === "sports") {
+            ctx.fillStyle = mod.accent;
+            ctx.fillRect(-15, -2, 30, 4);
+            ctx.fillStyle = "#000000";
+            ctx.fillRect(-16, -7.5, 3, 15);
+          } else if (modelId === "suv") {
+            ctx.strokeStyle = mod.accent;
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(-11, -5.5, 15, 11);
+          }
+
+          ctx.fillStyle = "#fef08a";
+          ctx.fillRect(14.5, -6.5, 2, 3);
+          ctx.fillRect(14.5, 3.5, 2, 3);
+        } else if (vehicleId === "barca") {
+          ctx.fillStyle = mod.primary;
+          ctx.strokeStyle = "#000000";
+          ctx.lineWidth = 1.7;
+          ctx.beginPath();
+          ctx.moveTo(21, 0);
+          ctx.quadraticCurveTo(10, -9, -17, -7);
+          ctx.lineTo(-19, 0);
+          ctx.lineTo(-17, 7);
+          ctx.quadraticCurveTo(10, 9, 21, 0);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          if (modelId === "sailboat") {
+            ctx.fillStyle = mod.detail;
+            ctx.beginPath();
+            ctx.moveTo(10, 0);
+            ctx.quadraticCurveTo(-2, -13, -13, -2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          } else if (modelId === "cruise") {
+            ctx.fillStyle = mod.accent;
+            ctx.fillRect(-11, -4.5, 20, 9);
+            ctx.fillStyle = mod.detail;
+            ctx.fillRect(-5, -2.5, 5, 5);
+          } else {
+            ctx.fillStyle = mod.detail;
+            ctx.beginPath();
+            ctx.moveTo(9, 0);
+            ctx.lineTo(-9, -4.5);
+            ctx.lineTo(-9, 4.5);
+            ctx.closePath();
+            ctx.fill();
+          }
+        } else {
+          const swing = Math.sin(state.elapsedSec * 12) * 4.5;
+          ctx.strokeStyle = "#000000";
+          ctx.lineWidth = 3.2;
+          ctx.beginPath();
+          ctx.moveTo(0, -3.5);
+          ctx.lineTo(swing, -5);
+          ctx.moveTo(0, 3.5);
+          ctx.lineTo(-swing, 5);
+          ctx.stroke();
+
+          ctx.fillStyle = mod.primary;
+          ctx.strokeStyle = "#000000";
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.ellipse(-1, 0, 6.5, 8.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          if (modelId === "hiker") {
+            ctx.fillStyle = mod.accent;
+            ctx.beginPath();
+            ctx.roundRect(-7, -5.5, 4.5, 11, 2);
+            ctx.fill();
+          }
+
+          ctx.fillStyle = mod.detail;
+          ctx.beginPath();
+          ctx.arc(3.5, 0, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+
+      function renderRouteAndVehicle(viewW, viewH, zoom, routeEval) {
+        const stops = state.stops;
+        if (!stops.length) return;
+
+        const screenPts = stops.map((s) => latLonToScreen(s.lat, s.lon, viewW, viewH, zoom));
+
+        if (stops.length >= 2) {
+          const totalLegs = stops.length - 1;
+          const scaled = state.progress * totalLegs;
+
+          for (let i = 0; i < totalLegs; i++) {
+            const sA = stops[i];
+            const pA = screenPts[i];
+            const pB = screenPts[i + 1];
+            const cat = getCategoryObj(sA.vehicle || "automobile");
+            const ctrl = getControlPoint(pA, pB, cat.isAir);
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(pA.x, pA.y);
+            ctx.quadraticCurveTo(ctrl.x, ctrl.y, pB.x, pB.y);
+            ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+            ctx.lineWidth = cat.width + 2;
+            ctx.setLineDash(cat.dash);
+            ctx.lineCap = "round";
+            ctx.stroke();
+            ctx.restore();
+
+            const legProgress = clamp(scaled - i, 0, 1);
+            if (legProgress > 0) {
+              ctx.save();
+              ctx.beginPath();
+              ctx.moveTo(pA.x, pA.y);
+              const steps = 36;
+              const maxStep = Math.max(1, Math.ceil(steps * legProgress));
+              for (let k = 1; k <= maxStep; k++) {
+                const t = Math.min(legProgress, (k / maxStep) * legProgress);
+                const pt = evalQuadBezier(pA, ctrl, pB, t);
+                ctx.lineTo(pt.x, pt.y);
+              }
+              ctx.strokeStyle = state.routeColor;
+              ctx.lineWidth = cat.width;
+              ctx.setLineDash(cat.dash);
+              ctx.lineCap = "round";
+              ctx.shadowColor = state.routeColor;
+              ctx.shadowBlur = 9;
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
+        }
+
+        stops.forEach((stop, idx) => {
+          const pt = screenPts[idx];
+          if (pt.x < -80 || pt.x > viewW + 80 || pt.y < -80 || pt.y > viewH + 80) return;
+
+          const isFirst = idx === 0;
+          const isLast = idx === stops.length - 1;
+          const isReached = idx <= routeEval.legIndex || state.progress >= 0.999;
+          const hasPhotos = Array.isArray(stop.photos) && stop.photos.length > 0;
+          const radius = isFirst || isLast ? 9.5 : 7.5;
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, radius + 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+          ctx.fillStyle = isFirst ? "#6ee7b7" : isLast ? "#fcd34d" : isReached ? "#fda4af" : "#e2e8f0";
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = "#000000";
+          ctx.stroke();
+
+          ctx.fillStyle = "#000000";
+          ctx.font = "900 10px Inter, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(idx + 1), pt.x, pt.y + 0.5);
+
+          const label = hasPhotos ? `${stop.name} 📷${stop.photos.length}` : stop.name;
+          ctx.font = "800 11.5px Inter, sans-serif";
+          const textW = ctx.measureText(label).width;
+          const pillW = textW + 14;
+          const pillH = 20;
+          const pillX = pt.x - pillW / 2;
+          const pillY = pt.y + radius + 6;
+
+          ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+          ctx.strokeStyle = "#000000";
+          ctx.lineWidth = 1.25;
+          ctx.beginPath();
+          ctx.roundRect(pillX, pillY, pillW, pillH, 999);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = "#000000";
+          ctx.fillText(label, pt.x, pillY + pillH / 2 + 0.5);
+          ctx.restore();
+        });
+
+        const vScreen = latLonToScreen(routeEval.lat, routeEval.lon, viewW, viewH, zoom);
+        ctx.save();
+        // Quando la telecamera segue il cursore, il centro logico coincide esattamente con il centro dello schermo
+        const cursorX = state.followCamera && !state.dragging ? viewW / 2 : vScreen.x;
+        const cursorY = state.followCamera && !state.dragging ? viewH / 2 : vScreen.y;
+        ctx.translate(cursorX, cursorY);
+        drawCursorVehicleModel(ctx, routeEval.vehicle, routeEval.model, routeEval.heading, routeEval.isAir);
+        ctx.restore();
+      }
+
+      function renderAspectOverlay(viewW, viewH) {
+        if (state.aspectMode === "full") return;
+        const targetRatio = state.aspectMode === "9:16" ? 9 / 16 : 16 / 9;
+        const currentRatio = viewW / Math.max(1, viewH);
+
+        let frameW = viewW;
+        let frameH = viewH;
+        if (currentRatio > targetRatio) {
+          frameW = viewH * targetRatio;
+        } else {
+          frameH = viewW / targetRatio;
+        }
+
+        const x = (viewW - frameW) / 2;
+        const y = (viewH - frameH) / 2;
+
+        ctx.save();
+        ctx.fillStyle = "rgba(248, 250, 252, 0.78)";
+        ctx.fillRect(0, 0, viewW, y);
+        ctx.fillRect(0, y + frameH, viewW, viewH - (y + frameH));
+        ctx.fillRect(0, y, x, frameH);
+        ctx.fillRect(x + frameW, y, viewW - (x + frameW), frameH);
+
+        ctx.strokeStyle = "#000000";
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(x, y, frameW, frameH);
+        ctx.restore();
+      }
+
+      // =========================================================================
+      // 11. GESTIONE UI, DOCK 5 MEZZI / 15 MODELLI, CARD TAPPE E VISUALVIEWPORT
+      // =========================================================================
+      function renderVehicleDock() {
+        dom.vehicleDockList.innerHTML = "";
+        VEHICLE_CATEGORIES.forEach((cat) => {
+          const active = state.activeVehicle === cat.id;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = `min-h-[38px] px-2.5 sm:px-3 py-1 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 transition cursor-pointer ${
+            active
+              ? "bg-rose-300 text-black border border-black shadow-sm"
+              : "bg-[#f1f5f9] hover:bg-slate-200 text-black border border-black/20"
+          }`;
+          const iconMap = { aereo: "✈️", bus: "🚌", automobile: "🚗", barca: "⛵", piedi: "🥾" };
+          btn.innerHTML = `<span>${iconMap[cat.id] || "📍"}</span><span>${cat.label}</span>`;
+          btn.addEventListener("click", () => {
+            state.activeVehicle = cat.id;
+            const firstModel = cat.models[0].id;
+            state.activeModel = firstModel;
+            const routeEval = evaluateRouteAt(state.progress);
+            if (state.stops[routeEval.legIndex]) {
+              state.stops[routeEval.legIndex].vehicle = cat.id;
+              state.stops[routeEval.legIndex].model = firstModel;
+            }
+            renderVehicleDock();
+            renderModelDock();
+            renderStopsDrawer();
+          });
+          dom.vehicleDockList.appendChild(btn);
+        });
+      }
+
+      function renderModelDock() {
+        const cat = getCategoryObj(state.activeVehicle);
+        dom.modelDockList.innerHTML = "";
+        cat.models.forEach((mod) => {
+          const active = state.activeModel === mod.id;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = `px-2.5 py-1 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 shrink-0 transition cursor-pointer ${
+            active
+              ? "bg-amber-200 text-black border border-black"
+              : "bg-[#f1f5f9] hover:bg-slate-200 text-black border border-black/20"
+          }`;
+          btn.innerHTML = `
+            <span class="w-2.5 h-2.5 rounded-full border border-black shrink-0" style="background:${mod.primary}"></span>
+            <span>${mod.label}</span>
+          `;
+          btn.addEventListener("click", () => {
+            state.activeModel = mod.id;
+            const routeEval = evaluateRouteAt(state.progress);
+            if (state.stops[routeEval.legIndex]) {
+              state.stops[routeEval.legIndex].vehicle = cat.id;
+              state.stops[routeEval.legIndex].model = mod.id;
+            }
+            renderModelDock();
+            renderStopsDrawer();
+          });
+          dom.modelDockList.appendChild(btn);
+        });
+      }
+
+      function renderStopsDrawer() {
+        dom.stopsContainer.innerHTML = "";
+        state.stops.forEach((stop, idx) => {
+          const isLast = idx === state.stops.length - 1;
+          const currentCat = getCategoryObj(stop.vehicle || "automobile");
+          const photos = Array.isArray(stop.photos) ? stop.photos : [];
+
+          const card = document.createElement("div");
+          card.className = "p-3 rounded-2xl bg-[#f8fafc] border border-black/25 space-y-2.5 text-black";
+
+          const headerRow = document.createElement("div");
+          headerRow.className = "flex items-center justify-between gap-2";
+
+          const badgeColor =
+            idx === 0
+              ? "bg-emerald-300 text-black border border-black/30"
+              : isLast
+              ? "bg-amber-300 text-black border border-black/30"
+              : "bg-rose-300 text-black border border-black/30";
+
+          const leftInfo = document.createElement("div");
+          leftInfo.className = "flex items-center gap-2 min-w-0 flex-1";
+          leftInfo.innerHTML = `
+            <span class="w-5 h-5 rounded-full ${badgeColor} text-[10px] font-black flex items-center justify-center shrink-0">${idx + 1}</span>
+            <input type="text" value="${escapeHtml(stop.name)}" aria-label="Nome luogo tappa ${idx + 1}"
+              placeholder="Scrivi luogo per cercare..."
+              class="stop-name-input w-full bg-white text-xs font-extrabold text-black border border-black/25 rounded-lg px-2 py-1 focus:outline-none focus:border-black truncate" />
+          `;
+
+          const nameInput = leftInfo.querySelector(".stop-name-input");
+          const inlineSuggestionsBox = document.createElement("div");
+          inlineSuggestionsBox.className =
+            "hidden rounded-xl bg-white border border-black/30 p-1.5 space-y-1 max-h-40 overflow-y-auto thin-scroll shadow-md";
+
+          let inlineTimer = null;
+          nameInput.addEventListener("input", (e) => {
+            const q = e.target.value.trim();
+            stop.name = e.target.value;
+            clearTimeout(inlineTimer);
+            if (!q || q.length < 2) {
+              inlineSuggestionsBox.classList.add("hidden");
+              return;
+            }
+            const localQuick = findLocalPlaceCandidates(q);
+            if (localQuick.length) {
+              inlineSuggestionsBox.innerHTML = "";
+              localQuick.slice(0, 5).forEach((cand) => {
+                const itemBtn = document.createElement("button");
+                itemBtn.type = "button";
+                itemBtn.className =
+                  "w-full px-2 py-1 rounded-lg bg-[#f8fafc] hover:bg-rose-100 border border-black/15 text-left flex items-center justify-between gap-2 text-[11px] text-black cursor-pointer";
+                itemBtn.innerHTML = `
+                  <span class="truncate font-extrabold text-black">📍 ${escapeHtml(cand.name)} <span class="font-normal">(${escapeHtml(cand.subtitle)})</span></span>
+                  <span class="font-mono text-[9px] font-bold text-black shrink-0">${cand.lat.toFixed(2)}, ${cand.lon.toFixed(2)}</span>
+                `;
+                itemBtn.addEventListener("click", () => {
+                  stop.name = cand.name;
+                  stop.lat = cand.lat;
+                  stop.lon = cand.lon;
+                  nameInput.value = cand.name;
+                  inlineSuggestionsBox.classList.add("hidden");
+                  state.centerLat = cand.lat;
+                  state.centerLon = cand.lon;
+                  showToast(`Aggiornata tappa "${cand.name}"`, "📍");
+                });
+                inlineSuggestionsBox.appendChild(itemBtn);
+              });
+              inlineSuggestionsBox.classList.remove("hidden");
+            }
+
+            inlineTimer = setTimeout(async () => {
+              const hits = await searchPlaceCandidatesWorldwide(q, true);
+              if (!hits.length) return;
+              inlineSuggestionsBox.innerHTML = "";
+              hits.slice(0, 5).forEach((cand) => {
+                const itemBtn = document.createElement("button");
+                itemBtn.type = "button";
+                itemBtn.className =
+                  "w-full px-2 py-1 rounded-lg bg-[#f8fafc] hover:bg-rose-100 border border-black/15 text-left flex items-center justify-between gap-2 text-[11px] text-black cursor-pointer";
+                itemBtn.innerHTML = `
+                  <span class="truncate font-extrabold text-black">📍 ${escapeHtml(cand.name)} <span class="font-normal">(${escapeHtml(cand.subtitle)})</span></span>
+                  <span class="font-mono text-[9px] font-bold text-black shrink-0">${cand.lat.toFixed(2)}, ${cand.lon.toFixed(2)}</span>
+                `;
+                itemBtn.addEventListener("click", () => {
+                  stop.name = cand.name;
+                  stop.lat = cand.lat;
+                  stop.lon = cand.lon;
+                  nameInput.value = cand.name;
+                  inlineSuggestionsBox.classList.add("hidden");
+                  state.centerLat = cand.lat;
+                  state.centerLon = cand.lon;
+                  showToast(`Aggiornata tappa "${cand.name}"`, "📍");
+                });
+                inlineSuggestionsBox.appendChild(itemBtn);
+              });
+              inlineSuggestionsBox.classList.remove("hidden");
+            }, 320);
+          });
+
+          const actions = document.createElement("div");
+          actions.className = "flex items-center gap-1 shrink-0";
+
+          const upBtn = document.createElement("button");
+          upBtn.type = "button";
+          upBtn.textContent = "↑";
+          upBtn.disabled = idx === 0;
+          upBtn.className = "w-6 h-6 rounded-lg bg-white hover:bg-[#f1f5f9] border border-black/25 disabled:opacity-30 text-xs font-black text-black cursor-pointer";
+          upBtn.addEventListener("click", () => {
+            if (idx === 0) return;
+            [state.stops[idx - 1], state.stops[idx]] = [state.stops[idx], state.stops[idx - 1]];
+            renderStopsDrawer();
+          });
+
+          const downBtn = document.createElement("button");
+          downBtn.type = "button";
+          downBtn.textContent = "↓";
+          downBtn.disabled = isLast;
+          downBtn.className = "w-6 h-6 rounded-lg bg-white hover:bg-[#f1f5f9] border border-black/25 disabled:opacity-30 text-xs font-black text-black cursor-pointer";
+          downBtn.addEventListener("click", () => {
+            if (isLast) return;
+            [state.stops[idx + 1], state.stops[idx]] = [state.stops[idx], state.stops[idx + 1]];
+            renderStopsDrawer();
+          });
+
+          const delBtn = document.createElement("button");
+          delBtn.type = "button";
+          delBtn.textContent = "✕";
+          delBtn.disabled = state.stops.length <= 2;
+          delBtn.className = "w-6 h-6 rounded-lg bg-rose-200 hover:bg-rose-300 border border-black/25 disabled:opacity-30 text-black text-xs font-black cursor-pointer";
+          delBtn.addEventListener("click", () => {
+            if (state.stops.length <= 2) return;
+            state.stops.splice(idx, 1);
+            renderStopsDrawer();
+          });
+
+          actions.appendChild(upBtn);
+          actions.appendChild(downBtn);
+          actions.appendChild(delBtn);
+
+          headerRow.appendChild(leftInfo);
+          headerRow.appendChild(actions);
+          card.appendChild(headerRow);
+          card.appendChild(inlineSuggestionsBox);
+
+          const controlsGrid = document.createElement("div");
+          controlsGrid.className = isLast ? "grid grid-cols-1 gap-1.5" : "grid grid-cols-3 gap-1.5";
+
+          if (!isLast) {
+            const catSelect = document.createElement("select");
+            catSelect.ariaLabel = `Categoria mezzo tappa ${idx + 1}`;
+            catSelect.className =
+              "px-2 py-1.5 rounded-xl bg-white border border-black/25 text-[11px] font-extrabold text-black focus:outline-none cursor-pointer";
+            VEHICLE_CATEGORIES.forEach((c) => {
+              const opt = document.createElement("option");
+              opt.value = c.id;
+              opt.textContent = c.label;
+              opt.className = "bg-white text-black";
+              if (c.id === currentCat.id) opt.selected = true;
+              catSelect.appendChild(opt);
+            });
+
+            const modSelect = document.createElement("select");
+            modSelect.ariaLabel = `Modello mezzo tappa ${idx + 1}`;
+            modSelect.className =
+              "px-2 py-1.5 rounded-xl bg-white border border-black/25 text-[11px] font-extrabold text-black focus:outline-none cursor-pointer";
+            currentCat.models.forEach((m) => {
+              const opt = document.createElement("option");
+              opt.value = m.id;
+              opt.textContent = m.label;
+              opt.className = "bg-white text-black";
+              if (m.id === stop.model) opt.selected = true;
+              modSelect.appendChild(opt);
+            });
+
+            catSelect.addEventListener("change", (e) => {
+              const newCatId = e.target.value;
+              const newCatObj = getCategoryObj(newCatId);
+              stop.vehicle = newCatId;
+              stop.model = newCatObj.models[0].id;
+              state.activeVehicle = newCatId;
+              state.activeModel = stop.model;
+              renderVehicleDock();
+              renderModelDock();
+              renderStopsDrawer();
+            });
+
+            modSelect.addEventListener("change", (e) => {
+              stop.model = e.target.value;
+              state.activeVehicle = stop.vehicle;
+              state.activeModel = stop.model;
+              renderVehicleDock();
+              renderModelDock();
+            });
+
+            controlsGrid.appendChild(catSelect);
+            controlsGrid.appendChild(modSelect);
+          }
+
+          const pauseSelect = document.createElement("select");
+          pauseSelect.ariaLabel = `Pausa arrivo tappa ${idx + 1}`;
+          pauseSelect.className =
+            "px-2 py-1.5 rounded-xl bg-white border border-black/25 text-[11px] font-extrabold text-black focus:outline-none cursor-pointer";
+          [2, 3, 4, 6, 8, 10].forEach((sec) => {
+            const opt = document.createElement("option");
+            opt.value = String(sec);
+            opt.textContent = `⏱ Pausa ${sec}s`;
+            opt.className = "bg-white text-black";
+            if ((Number(stop.pauseSec) || 4) === sec) opt.selected = true;
+            pauseSelect.appendChild(opt);
+          });
+          pauseSelect.addEventListener("change", (e) => {
+            stop.pauseSec = Number(e.target.value) || 4;
+          });
+          controlsGrid.appendChild(pauseSelect);
+          card.appendChild(controlsGrid);
+
+          const photoSection = document.createElement("div");
+          photoSection.className = "pt-1.5 border-t border-black/15 space-y-1.5";
+
+          const photoTopBar = document.createElement("div");
+          photoTopBar.className = "flex items-center justify-between gap-2";
+
+          const photoLabel = document.createElement("span");
+          photoLabel.className = "text-[10px] font-extrabold text-black";
+          photoLabel.textContent = `📷 Foto arrivo (${photos.length}/3)`;
+
+          const photoBtns = document.createElement("div");
+          photoBtns.className = "flex items-center gap-1";
+
+          if (photos.length > 0) {
+            const previewPhotoBtn = document.createElement("button");
+            previewPhotoBtn.type = "button";
+            previewPhotoBtn.className =
+              "px-2 py-0.5 rounded-lg bg-amber-200 hover:bg-amber-300 border border-black/25 text-black text-[10px] font-black cursor-pointer";
+            previewPhotoBtn.textContent = "👁️ Anteprima";
+            previewPhotoBtn.addEventListener("click", () => openArrivalPhotoModal(stop));
+            photoBtns.appendChild(previewPhotoBtn);
+          }
+
+          if (photos.length < 3) {
+            const addPhotoBtn = document.createElement("button");
+            addPhotoBtn.type = "button";
+            addPhotoBtn.className =
+              "px-2 py-0.5 rounded-lg bg-[#f1f5f9] hover:bg-sky-200 border border-black/25 text-black text-[10px] font-black cursor-pointer";
+            addPhotoBtn.textContent = "+ Foto";
+            addPhotoBtn.addEventListener("click", () => {
+              state.photoUploadTargetStopId = stop.id;
+              dom.stopPhotosFileInput.click();
+            });
+            photoBtns.appendChild(addPhotoBtn);
+          }
+
+          photoTopBar.appendChild(photoLabel);
+          photoTopBar.appendChild(photoBtns);
+          photoSection.appendChild(photoTopBar);
+
+          if (photos.length > 0) {
+            const thumbsRow = document.createElement("div");
+            thumbsRow.className = "grid grid-cols-3 gap-1.5";
+            photos.forEach((src, pIdx) => {
+              const thumbWrap = document.createElement("div");
+              thumbWrap.className = "relative h-14 rounded-xl overflow-hidden border border-black/25 bg-white";
+              thumbWrap.innerHTML = `
+                <img src="${src}" alt="Foto ${pIdx + 1}" class="w-full h-full object-cover" />
+                <button type="button" title="Rimuovi foto"
+                  class="remove-photo-btn absolute top-1 right-1 w-4 h-4 rounded-full bg-white text-black border border-black/30 text-[10px] font-black flex items-center justify-center cursor-pointer">✕</button>
+              `;
+              thumbWrap.querySelector(".remove-photo-btn").addEventListener("click", () => {
+                stop.photos.splice(pIdx, 1);
+                renderStopsDrawer();
+              });
+              thumbsRow.appendChild(thumbWrap);
+            });
+            photoSection.appendChild(thumbsRow);
+
+            const captionInput = document.createElement("input");
+            captionInput.type = "text";
+            captionInput.value = stop.photoCaption || "";
+            captionInput.placeholder = "Didascalia foto all'arrivo (opzionale)...";
+            captionInput.className =
+              "w-full px-2.5 py-1 rounded-lg bg-white border border-black/20 text-[11px] font-semibold text-black focus:outline-none focus:border-black";
+            captionInput.addEventListener("change", (e) => {
+              stop.photoCaption = e.target.value.trim();
+            });
+            photoSection.appendChild(captionInput);
+          }
+
+          card.appendChild(photoSection);
+          dom.stopsContainer.appendChild(card);
+        });
+
+        const bottomAddBtn = document.createElement("button");
+        bottomAddBtn.type = "button";
+        bottomAddBtn.className =
+          "w-full py-2.5 px-3 rounded-2xl bg-[#f1f5f9] hover:bg-sky-200 border border-black/30 text-black text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer";
+        bottomAddBtn.innerHTML = "<span>+ Nuova tappa</span>";
+        bottomAddBtn.addEventListener("click", () => addNewEmptyOrResolvedStop());
+        dom.stopsContainer.appendChild(bottomAddBtn);
+      }
+
+      function addStop(name, lat, lon, vehicle = state.activeVehicle, model = state.activeModel) {
+        const cleanName = String(name || "Nuova Tappa").trim();
+        state.stops.push({
+          id: `stop_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: cleanName,
+          lat,
+          lon,
+          vehicle,
+          model,
+          pauseSec: 4,
+          photos: [],
+          photoCaption: ""
+        });
+        state.centerLat = lat;
+        state.centerLon = lon;
+        renderStopsDrawer();
+        showToast(`Aggiunta tappa "${cleanName}"`, "📍");
+      }
+
+      function addNewEmptyOrResolvedStop() {
+        const typed = dom.citySearchInput ? dom.citySearchInput.value.trim() : "";
+        if (typed) {
+          renderPlaceCandidates(typed, findLocalPlaceCandidates(typed), true);
+          searchPlaceCandidatesWorldwide(typed, false).then((hits) => {
+            renderPlaceCandidates(typed, hits, false);
+          });
+          dom.citySearchInput.focus();
+          return;
+        }
+
+        const refStop = state.stops[state.stops.length - 1];
+        const newLat = refStop ? clamp(refStop.lat + 0.35, -80, 80) : state.centerLat;
+        const newLon = refStop ? clamp(refStop.lon + 0.35, -175, 175) : state.centerLon;
+        addStop(`Tappa ${state.stops.length + 1}`, newLat, newLon);
+        setTimeout(() => {
+          dom.stopsContainer.scrollTop = dom.stopsContainer.scrollHeight;
+        }, 40);
+      }
+
+      function updateHud(routeEval) {
+        dom.hudItineraryTitle.textContent = state.itineraryTitle;
+        dom.hudLegTitle.textContent =
+          state.stops.length >= 2 ? `${routeEval.fromName} → ${routeEval.toName}` : routeEval.fromName;
+
+        const cat = getCategoryObj(routeEval.vehicle);
+        const mod = getModelObj(routeEval.vehicle, routeEval.model);
+        dom.hudModelBadge.textContent = `${cat.label} · ${mod.label}`;
+
+        if (dom.hudZoomProfilePill) {
+          dom.hudZoomProfilePill.textContent = routeEval.isAir ? "✈️ Zoom alto" : "🔍 Zoom ravvicinato";
+        }
+
+        if (routeEval.isArriving) {
+          dom.hudArrivalPill.classList.remove("hidden");
+        } else {
+          dom.hudArrivalPill.classList.add("hidden");
+        }
+
+        const currentStep = Math.min(routeEval.legIndex + 1, Math.max(1, state.stops.length));
+        dom.hudStepCounter.textContent = `${currentStep} / ${state.stops.length}`;
+        dom.hudDistanceLabel.textContent = `${Math.round(routeEval.traveledKm)} / ${Math.round(routeEval.totalKm)} km`;
+
+        dom.progressSlider.value = Math.round(state.progress * 1000);
+        dom.percentText.textContent = `${Math.round(state.progress * 100)}%`;
+
+        const secs = Math.floor(state.elapsedSec);
+        const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+        const ss = String(secs % 60).padStart(2, "0");
+        dom.timeElapsedText.textContent = `${mm}:${ss}`;
+
+        dom.playPauseIcon.textContent = state.playing ? "⏸" : "▶";
+        dom.playPauseText.textContent = state.playing ? "Pausa" : "Avvia";
+
+        if (state.activeVehicle !== routeEval.vehicle || state.activeModel !== routeEval.model) {
+          state.activeVehicle = routeEval.vehicle;
+          state.activeModel = routeEval.model;
+          renderVehicleDock();
+          renderModelDock();
+        }
+      }
+
+      function fitAllRoute() {
+        if (!state.stops.length) return;
+        let minLat = 90;
+        let maxLat = -90;
+        let minLon = 180;
+        let maxLon = -180;
+
+        state.stops.forEach((s) => {
+          minLat = Math.min(minLat, s.lat);
+          maxLat = Math.max(maxLat, s.lat);
+          minLon = Math.min(minLon, s.lon);
+          maxLon = Math.max(maxLon, s.lon);
+        });
+
+        state.centerLat = (minLat + maxLat) / 2;
+        state.centerLon = (minLon + maxLon) / 2;
+        state.followCamera = false;
+        state.arrivalZoomBoost = 0;
+
+        const span = Math.max(maxLat - minLat, maxLon - minLon, 0.4);
+        const idealZoom = clamp(Math.log2(320 / span), 2.2, 11.5);
+        state.manualZoomOffset = idealZoom - state.baseZoom;
+      }
+
+      function toggleVideoRecording() {
+        if (state.isRecording) {
+          if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") {
+            state.mediaRecorder.stop();
+          }
+          return;
+        }
+
+        if (typeof dom.canvas.captureStream !== "function" || typeof MediaRecorder === "undefined") {
+          showToast("Registrazione video non supportata da questo browser", "⚠️");
+          return;
+        }
+
+        try {
+          const stream = dom.canvas.captureStream(30);
+          const mimeCandidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+          const selectedMime = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || "";
+
+          state.recordedChunks = [];
+          state.mediaRecorder = selectedMime
+            ? new MediaRecorder(stream, { mimeType: selectedMime })
+            : new MediaRecorder(stream);
+
+          state.mediaRecorder.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) {
+              state.recordedChunks.push(ev.data);
+            }
+          };
+
+          state.mediaRecorder.onstop = () => {
+            state.isRecording = false;
+            dom.recordDot.classList.remove("rec-dot");
+            dom.recordBtnText.textContent = "Video";
+            dom.recordVideoBtn.classList.remove("bg-rose-400");
+            dom.recordVideoBtn.classList.add("bg-emerald-300");
+
+            const blob = new Blob(state.recordedChunks, { type: "video/webm" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            const slug = normalizeString(state.itineraryTitle).replace(/[^a-z0-9]+/g, "_") || "viaggio";
+            a.download = `MapFinAnimation_${slug}.webm`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 4000);
+            showToast("Video WebM salvato!", "🎬");
+          };
+
+          state.mediaRecorder.start();
+          state.isRecording = true;
+          dom.recordDot.classList.add("rec-dot");
+          dom.recordBtnText.textContent = "Stop";
+          dom.recordVideoBtn.classList.remove("bg-emerald-300");
+          dom.recordVideoBtn.classList.add("bg-rose-400");
+          showToast("Registrazione video avviata...", "🔴");
+        } catch (err) {
+          console.error(err);
+          showToast("Impossibile avviare la registrazione video", "⚠️");
+        }
+      }
+
+      // Supporto visualViewport per mantenere il drawer e i campi input accessibili con tastiera mobile aperta
+      function syncViewportAndDrawerLayout() {
+        const vv = window.visualViewport;
+        const activeH = vv ? vv.height : window.innerHeight;
+        const activeW = vv ? vv.width : window.innerWidth;
+        const offsetTop = vv ? vv.offsetTop : 0;
+
+        if (dom.itineraryDrawer && !dom.itineraryDrawer.classList.contains("hidden")) {
+          if (activeW < 640) {
+            dom.itineraryDrawer.style.top = `${Math.max(0, offsetTop)}px`;
+            dom.itineraryDrawer.style.height = `${Math.max(240, activeH)}px`;
+            dom.itineraryDrawer.style.maxHeight = `${Math.max(240, activeH)}px`;
+          } else {
+            dom.itineraryDrawer.style.top = "";
+            dom.itineraryDrawer.style.height = "";
+            dom.itineraryDrawer.style.maxHeight = "";
+          }
+        }
+      }
+
+      // =========================================================================
+      // 12. LOOP PRINCIPALE DI ANIMAZIONE & RIDIMENSIONAMENTO CANVAS
+      // =========================================================================
+      function resizeCanvas() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const w = Math.max(1, dom.appRoot ? dom.appRoot.clientWidth : window.innerWidth);
+        const h = Math.max(1, dom.appRoot ? dom.appRoot.clientHeight : window.innerHeight);
+
+        state.viewportWidth = w;
+        state.viewportHeight = h;
+
+        dom.canvas.width = Math.round(w * dpr);
+        dom.canvas.height = Math.round(h * dpr);
+        dom.canvas.style.width = `${w}px`;
+        dom.canvas.style.height = `${h}px`;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        syncViewportAndDrawerLayout();
+      }
+
+      function renderSceneFrame(viewW, viewH, effectiveZoom, routeEval) {
+        renderVectorMapLayer(viewW, viewH, effectiveZoom, false);
+        const drawnTiles = renderFreeTilesLayer(viewW, viewH, effectiveZoom);
+        if (drawnTiles > 0) {
+          renderRouteAndVehicle(viewW, viewH, effectiveZoom, routeEval);
+        } else {
+          renderRouteAndVehicle(viewW, viewH, effectiveZoom, routeEval);
+        }
+        renderAspectOverlay(viewW, viewH);
+      }
+
+      function animate(timestamp) {
+        if (!state.lastTimestamp) state.lastTimestamp = timestamp;
+        const dt = Math.min((timestamp - state.lastTimestamp) / 1000, 0.1);
+        state.lastTimestamp = timestamp;
+
+        const viewW = state.viewportWidth || window.innerWidth || 1280;
+        const viewH = state.viewportHeight || window.innerHeight || 720;
+
+        let routeEval = evaluateRouteAt(state.progress);
+
+        if (state.playing && state.stops.length >= 2 && !state.photoModalOpen) {
+          const totalDurationSec = Math.max(1, routeEval.totalLegs * NOMINAL_LEG_SEC);
+          const speedFactor = getSpeedMultiplierAt(routeEval.legT);
+          const deltaProgress = (dt * state.speed * speedFactor) / totalDurationSec;
+
+          state.progress += deltaProgress;
+          state.elapsedSec += dt * state.speed;
+
+          if (state.progress >= 1) {
+            state.progress = 1;
+            state.playing = false;
+          }
+          routeEval = evaluateRouteAt(state.progress);
+        }
+
+        if (
+          routeEval.arrivedStop &&
+          Array.isArray(routeEval.arrivedStop.photos) &&
+          routeEval.arrivedStop.photos.length > 0 &&
+          !state.triggeredArrivalStopIds.has(routeEval.arrivedStop.id) &&
+          !state.photoModalOpen
+        ) {
+          state.triggeredArrivalStopIds.add(routeEval.arrivedStop.id);
+          openArrivalPhotoModal(routeEval.arrivedStop);
+        }
+
+        if (state.followCamera && !state.dragging) {
+          // Mantieni il cursore ancorato al centro esatto della mappa e dello schermo
+          lockCameraToCursor(routeEval);
+
+          const targetCruiseZoom = computeAdaptiveLegZoom(routeEval.legDistKm || 120, routeEval.isAir);
+          state.baseZoom = lerp(state.baseZoom, targetCruiseZoom, 1 - Math.exp(-dt * 4.5));
+
+          const targetArrivalBoost = computeArrivalZoomBoost(routeEval.legT, routeEval.isAir);
+          state.arrivalZoomBoost = lerp(state.arrivalZoomBoost, targetArrivalBoost, 1 - Math.exp(-dt * 9.0));
+        }
+
+        const effectiveZoom = getEffectiveZoom();
+        renderSceneFrame(viewW, viewH, effectiveZoom, routeEval);
+        updateHud(routeEval);
+        requestAnimationFrame(animate);
+      }
+
+      // =========================================================================
+      // 13. EVENTI INTERATTIVI (TOUCH + MOUSE + VISUALVIEWPORT)
+      // =========================================================================
+      dom.itineraryTitleInput.addEventListener("input", (e) => {
+        setItineraryTitle(e.target.value);
+      });
+
+      dom.createNewItineraryBtn.addEventListener("click", () => {
+        dom.newItineraryComposerBox.classList.remove("hidden");
+        dom.newItineraryNameInput.value = "";
+        dom.newItineraryNameInput.focus();
+      });
+
+      dom.cancelNewItineraryBtn.addEventListener("click", () => {
+        dom.newItineraryComposerBox.classList.add("hidden");
+      });
+
+      dom.saveItineraryManualBtn.addEventListener("click", () => {
+        saveCurrentItineraryExplicitly();
+      });
+
+      dom.addNewStopTopBtn.addEventListener("click", () => {
+        switchDrawerTab("stops");
+        addNewEmptyOrResolvedStop();
+      });
+
+      function startDraftNewItinerary() {
+        const chosenName = dom.newItineraryNameInput.value.trim() || "Nuovo Itinerario";
+        closeArrivalPhotoModal(false);
+        state.itineraryId = `itin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        state.isDraftItinerary = true;
+        setItineraryTitle(chosenName);
+        state.stops = [
+          {
+            id: `stop_${Date.now()}_1`,
+            name: "Partenza",
+            lat: Number(state.centerLat.toFixed(4)),
+            lon: Number(state.centerLon.toFixed(4)),
+            vehicle: state.activeVehicle,
+            model: state.activeModel,
+            pauseSec: 4,
+            photos: [],
+            photoCaption: ""
+          },
+          {
+            id: `stop_${Date.now()}_2`,
+            name: "Arrivo",
+            lat: Number(clamp(state.centerLat + 0.55, -80, 80).toFixed(4)),
+            lon: Number(clamp(state.centerLon + 0.55, -175, 175).toFixed(4)),
+            vehicle: state.activeVehicle,
+            model: state.activeModel,
+            pauseSec: 4,
+            photos: [],
+            photoCaption: ""
+          }
+        ];
+        state.progress = 0;
+        state.elapsedSec = 0;
+        state.arrivalZoomBoost = 0;
+        state.triggeredArrivalStopIds.clear();
+        state.followCamera = true;
+        state.playing = false;
+        dom.newItineraryComposerBox.classList.add("hidden");
+        switchDrawerTab("stops");
+        renderStopsDrawer();
+        renderSavedItinerariesList();
+        showToast(`Creato "${chosenName}". Premi 'Salva itinerario' per conservarlo`, "✨");
+      }
+
+      dom.confirmNewItineraryBtn.addEventListener("click", startDraftNewItinerary);
+      dom.newItineraryNameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          startDraftNewItinerary();
+        }
+      });
+
+      dom.openAddFileFromComposerBtn.addEventListener("click", () => {
+        const chosenName = dom.newItineraryNameInput.value.trim();
+        if (chosenName) {
+          dom.importTitleInput.value = chosenName;
+          setItineraryTitle(chosenName);
+        }
+        dom.newItineraryComposerBox.classList.add("hidden");
+        switchDrawerTab("import");
+        dom.deviceAnyFileInput.click();
+      });
+
+      async function handleDeviceUnifiedFile(file) {
+        if (!file) return;
+        const lowerName = file.name.toLowerCase();
+        const baseTitle = file.name.replace(/\.[^.]+$/, "");
+        if (!dom.importTitleInput.value.trim()) {
+          dom.importTitleInput.value = baseTitle;
+        }
+
+        if (lowerName.endsWith(".pdf") || file.type === "application/pdf") {
+          try {
+            showToast("Estrazione testo dal PDF in corso...", "📕");
+            const pdfText = await extractTextFromPdfFile(file);
+            dom.freeformTextArea.value = pdfText;
+            const stops = extractStopsFromText(pdfText);
+            updateImportPreview(stops);
+            showToast(`Estratte ${stops.length} tappe da "${file.name}"`, "📄");
+          } catch (err) {
+            console.error(err);
+            showToast("Impossibile leggere il file PDF selezionato", "⚠️");
+          }
+          return;
+        }
+
+        if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || lowerName.endsWith(".csv")) {
+          const isCsv = lowerName.endsWith(".csv");
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            try {
+              let rows = [];
+              if (typeof window.XLSX !== "undefined" && !isCsv) {
+                const data = new Uint8Array(ev.target.result);
+                const workbook = window.XLSX.read(data, { type: "array" });
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                rows = window.XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+              } else {
+                const text =
+                  typeof ev.target.result === "string"
+                    ? ev.target.result
+                    : new TextDecoder("utf-8").decode(new Uint8Array(ev.target.result));
+                rows = parseDelimitedTextRows(text);
+              }
+              let stops = parseTableRowsToStops(rows);
+              if (!stops.length && rows.length) {
+                const flatText = rows.map((r) => r.join(" ")).join("\n");
+                stops = extractStopsFromText(flatText);
+              }
+              updateImportPreview(stops);
+              showToast(`Estratte ${stops.length} tappe da "${file.name}"`, "📊");
+            } catch (err) {
+              console.error(err);
+              showToast("Errore nella lettura del file Excel/CSV", "⚠️");
+            }
+          };
+          if (isCsv) reader.readAsText(file, "UTF-8");
+          else reader.readAsArrayBuffer(file);
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const content = String(ev.target.result || "");
+          dom.freeformTextArea.value = content;
+          const stops = extractStopsFromText(content);
+          updateImportPreview(stops);
+          showToast(`Estratte ${stops.length} tappe da "${file.name}"`, "📄");
+        };
+        reader.readAsText(file, "UTF-8");
+      }
+
+      dom.deviceAnyFileInput.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        await handleDeviceUnifiedFile(file);
+        dom.deviceAnyFileInput.value = "";
+      });
+
+      dom.prevPhotoSlideBtn.addEventListener("click", () => {
+        if (!state.photoModalStop || !state.photoModalStop.photos.length) return;
+        const len = state.photoModalStop.photos.length;
+        state.photoModalIndex = (state.photoModalIndex - 1 + len) % len;
+        renderArrivalPhotoStage();
+      });
+
+      dom.nextPhotoSlideBtn.addEventListener("click", () => {
+        if (!state.photoModalStop || !state.photoModalStop.photos.length) return;
+        const len = state.photoModalStop.photos.length;
+        state.photoModalIndex = (state.photoModalIndex + 1) % len;
+        renderArrivalPhotoStage();
+      });
+
+      dom.togglePhotoPauseBtn.addEventListener("click", () => {
+        state.photoModalPaused = !state.photoModalPaused;
+        dom.togglePhotoPauseBtn.textContent = state.photoModalPaused ? "▶ Riprendi slide" : "⏸ Pausa slide";
+      });
+
+      dom.resumeFromPhotoBtn.addEventListener("click", () => {
+        closeArrivalPhotoModal(true);
+      });
+
+      dom.stopPhotosFileInput.addEventListener("change", async (e) => {
+        const files = Array.from(e.target.files || []);
+        const targetId = state.photoUploadTargetStopId;
+        dom.stopPhotosFileInput.value = "";
+        if (!files.length || !targetId) return;
+
+        const stop = state.stops.find((s) => s.id === targetId);
+        if (!stop) return;
+        if (!Array.isArray(stop.photos)) stop.photos = [];
+
+        const slotsLeft = 3 - stop.photos.length;
+        if (slotsLeft <= 0) {
+          showToast("Massimo 3 foto per questa tappa", "📷");
+          return;
+        }
+
+        const selected = files.slice(0, slotsLeft);
+        for (const f of selected) {
+          try {
+            const dataUrl = await readImageFileAsCompressedDataUrl(f);
+            stop.photos.push(dataUrl);
+          } catch (err) {
+            console.error(err);
+          }
+        }
+        renderStopsDrawer();
+        showToast(`Caricate ${selected.length} foto su "${stop.name}" (${stop.photos.length}/3)`, "📷");
+      });
+
+      dom.playPauseBtn.addEventListener("click", () => {
+        if (state.progress >= 1 && !state.playing) {
+          state.progress = 0;
+          state.elapsedSec = 0;
+          state.triggeredArrivalStopIds.clear();
+        }
+        state.playing = !state.playing;
+      });
+
+      dom.restartBtn.addEventListener("click", () => {
+        closeArrivalPhotoModal(false);
+        state.progress = 0;
+        state.elapsedSec = 0;
+        state.arrivalZoomBoost = 0;
+        state.triggeredArrivalStopIds.clear();
+        state.followCamera = true;
+        state.playing = true;
+      });
+
+      document.querySelectorAll(".speed-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.speed = parseFloat(btn.dataset.speed) || 1;
+          document.querySelectorAll(".speed-btn").forEach((b) => {
+            b.classList.remove("bg-amber-200", "border", "border-black/25");
+            b.classList.add("text-black");
+          });
+          btn.classList.add("bg-amber-200", "border", "border-black/25");
+        });
+      });
+
+      document.querySelectorAll(".aspect-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.aspectMode = btn.dataset.aspect || "full";
+          document.querySelectorAll(".aspect-btn").forEach((b) => {
+            b.classList.remove("bg-amber-200", "border", "border-black/25");
+            b.classList.add("text-black");
+          });
+          btn.classList.add("bg-amber-200", "border", "border-black/25");
+        });
+      });
+
+      dom.mapThemeSelect.addEventListener("change", (e) => {
+        state.mapTheme = e.target.value;
+      });
+
+      dom.recordVideoBtn.addEventListener("click", toggleVideoRecording);
+
+      function setCleanMode(enabled) {
+        state.cleanMode = enabled;
+        dom.topBar.classList.toggle("hidden", enabled);
+        dom.bottomDock.classList.toggle("hidden", enabled);
+        dom.cameraControls.classList.toggle("hidden", enabled);
+        if (enabled) dom.itineraryDrawer.classList.add("hidden");
+        dom.exitCleanModeBtn.classList.toggle("hidden", !enabled);
+      }
+
+      dom.cleanModeBtn.addEventListener("click", () => setCleanMode(true));
+      dom.exitCleanModeBtn.addEventListener("click", () => setCleanMode(false));
+
+      dom.zoomInBtn.addEventListener("click", () => {
+        state.manualZoomOffset = clamp(state.manualZoomOffset + 1.0, -10, 14);
+      });
+      dom.zoomOutBtn.addEventListener("click", () => {
+        state.manualZoomOffset = clamp(state.manualZoomOffset - 1.0, -10, 14);
+      });
+      dom.followCamBtn.addEventListener("click", () => {
+        state.followCamera = true;
+        state.manualZoomOffset = 0;
+        lockCameraToCursor(evaluateRouteAt(state.progress));
+        showToast("Cursore bloccato al centro dello schermo", "🎯");
+      });
+      dom.fitAllBtn.addEventListener("click", fitAllRoute);
+
+      dom.progressSlider.addEventListener("input", (e) => {
+        state.progress = clamp(Number(e.target.value) / 1000, 0, 1);
+        state.triggeredArrivalStopIds.clear();
+        const routeEval = evaluateRouteAt(state.progress);
+        if (state.followCamera) {
+          lockCameraToCursor(routeEval);
+        }
+      });
+
+      document.querySelectorAll(".color-dot").forEach((dot) => {
+        dot.addEventListener("click", () => {
+          state.routeColor = dot.dataset.color || "#ff3b5c";
+          document.querySelectorAll(".color-dot").forEach((d) => {
+            d.classList.remove("ring-2", "ring-black", "scale-110");
+            d.classList.add("opacity-85");
+          });
+          dot.classList.remove("opacity-85");
+          dot.classList.add("ring-2", "ring-black", "scale-110");
+        });
+      });
+
+      function setDrawerOpen(open) {
+        state.drawerOpen = open;
+        dom.itineraryDrawer.classList.toggle("hidden", !open);
+        syncViewportAndDrawerLayout();
+      }
+
+      dom.toggleItineraryBtn.addEventListener("click", () => setDrawerOpen(!state.drawerOpen));
+      dom.closeDrawerBtn.addEventListener("click", () => setDrawerOpen(false));
+
+      function switchDrawerTab(tab) {
+        const isStops = tab === "stops";
+        dom.stopsTabView.classList.toggle("hidden", !isStops);
+        dom.importTabView.classList.toggle("hidden", isStops);
+
+        dom.tabStopsBtn.className = isStops
+          ? "flex-1 py-1.5 rounded-xl bg-rose-300 text-black text-xs font-black border border-black/30 transition cursor-pointer"
+          : "flex-1 py-1.5 rounded-xl bg-white hover:bg-[#f1f5f9] text-black text-xs font-extrabold border border-black/20 transition cursor-pointer";
+        dom.tabImportBtn.className = !isStops
+          ? "flex-1 py-1.5 rounded-xl bg-rose-300 text-black text-xs font-black border border-black/30 transition cursor-pointer"
+          : "flex-1 py-1.5 rounded-xl bg-white hover:bg-[#f1f5f9] text-black text-xs font-extrabold border border-black/20 transition cursor-pointer";
+      }
+
+      dom.tabStopsBtn.addEventListener("click", () => switchDrawerTab("stops"));
+      dom.tabImportBtn.addEventListener("click", () => switchDrawerTab("import"));
+
+      dom.citySearchInput.addEventListener("input", () => {
+        const q = dom.citySearchInput.value.trim();
+        clearTimeout(placeSearchDebounce);
+        if (!q) {
+          dom.placeCandidatesBox.classList.add("hidden");
+          return;
+        }
+        const instantLocal = findLocalPlaceCandidates(q);
+        renderPlaceCandidates(q, instantLocal, true);
+
+        placeSearchDebounce = setTimeout(async () => {
+          const worldHits = await searchPlaceCandidatesWorldwide(q, true);
+          renderPlaceCandidates(q, worldHits, false);
+        }, 280);
+      });
+
+      dom.searchPlaceCandidatesBtn.addEventListener("click", async () => {
+        const q = dom.citySearchInput.value.trim();
+        if (!q) {
+          showToast("Scrivi un nome di luogo da cercare", "🔍");
+          return;
+        }
+        renderPlaceCandidates(q, findLocalPlaceCandidates(q), true);
+        const worldHits = await searchPlaceCandidatesWorldwide(q, false);
+        renderPlaceCandidates(q, worldHits, false);
+      });
+
+      dom.closeCandidatesBtn.addEventListener("click", () => {
+        dom.placeCandidatesBox.classList.add("hidden");
+      });
+
+      dom.mapPickToggleBtn.addEventListener("click", () => {
+        state.pickMode = !state.pickMode;
+        dom.canvas.classList.toggle("pick-mode", state.pickMode);
+        dom.mapPickHint.classList.toggle("hidden", !state.pickMode);
+        if (state.pickMode && state.viewportWidth < 640) {
+          setDrawerOpen(false);
+          state.pickMode = true;
+          dom.canvas.classList.add("pick-mode");
+          showToast("Tocca un punto sulla mappa per aggiungerlo", "🎯");
+        }
+      });
+
+      dom.importJsonQuickBtn.addEventListener("click", () => dom.jsonQuickInput.click());
+      dom.jsonQuickInput.addEventListener("change", (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const rawStr = String(ev.target.result || "");
+          try {
+            const parsedObj = JSON.parse(rawStr);
+            if (parsedObj && typeof parsedObj.title === "string" && parsedObj.title.trim()) {
+              state.itineraryId = `itin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              state.isDraftItinerary = true;
+              setItineraryTitle(parsedObj.title.trim());
+            }
+          } catch (_) {}
+          const parsedStops = extractStopsFromText(rawStr);
+          if (parsedStops.length >= 2) {
+            state.stops = parsedStops;
+            state.activeVehicle = state.stops[0].vehicle || "automobile";
+            state.activeModel = state.stops[0].model || getCategoryObj(state.activeVehicle).models[0].id;
+            state.progress = 0;
+            state.elapsedSec = 0;
+            state.arrivalZoomBoost = 0;
+            state.triggeredArrivalStopIds.clear();
+            state.followCamera = true;
+            state.playing = true;
+            renderVehicleDock();
+            renderModelDock();
+            renderStopsDrawer();
+            renderSavedItinerariesList();
+            showToast(`Importate ${parsedStops.length} tappe da JSON`, "✅");
+          } else {
+            showToast("Il file JSON deve contenere almeno 2 tappe valide", "⚠️");
+          }
+        };
+        reader.readAsText(file, "UTF-8");
+        dom.jsonQuickInput.value = "";
+      });
+
+      dom.exportJsonBtn.addEventListener("click", () => {
+        const payload = JSON.stringify(
+          { id: state.itineraryId, title: state.itineraryTitle, stops: state.stops, routeColor: state.routeColor },
+          null,
+          2
+        );
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const slug = normalizeString(state.itineraryTitle).replace(/[^a-z0-9]+/g, "_") || "itinerario";
+        a.download = `MapFinAnimation_${slug}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        showToast("Itinerario esportato in JSON", "📤");
+      });
+
+      dom.pdfFileInput.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        await handleDeviceUnifiedFile(file);
+        dom.pdfFileInput.value = "";
+      });
+
+      dom.excelFileInput.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        await handleDeviceUnifiedFile(file);
+        dom.excelFileInput.value = "";
+      });
+
+      dom.textFileInput.addEventListener("change", async (e) => {
+        const file = e.target.files && e.target.files[0];
+        await handleDeviceUnifiedFile(file);
+        dom.textFileInput.value = "";
+      });
+
+      dom.runAiExtractBtn.addEventListener("click", () => {
+        const stops = extractStopsFromText(dom.freeformTextArea.value);
+        updateImportPreview(stops);
+        showToast(`Estrazione completata: ${stops.length} tappe`, "✨");
+      });
+
+      dom.freeformTextArea.addEventListener("input", () => {
+        const stops = extractStopsFromText(dom.freeformTextArea.value);
+        updateImportPreview(stops);
+      });
+
+      dom.fillSampleTextBtn.addEventListener("click", () => {
+        const sample =
+          "Partenza da Roma in auto fino a Firenze, poi in bus verso Venezia, traversata in barca fino ad Atene e volo finale per Parigi.";
+        dom.freeformTextArea.value = sample;
+        if (!dom.importTitleInput.value.trim()) {
+          dom.importTitleInput.value = "Grand Tour Mediterraneo & Parigi";
+        }
+        updateImportPreview(extractStopsFromText(sample));
+      });
+
+      function applyImportedTitleIfProvided() {
+        const customImpTitle = dom.importTitleInput.value.trim();
+        if (customImpTitle) {
+          setItineraryTitle(customImpTitle);
+        }
+      }
+
+      dom.replaceItineraryBtn.addEventListener("click", () => {
+        if (state.parsedImportStops.length < 2) return;
+        state.itineraryId = `itin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        state.isDraftItinerary = true;
+        applyImportedTitleIfProvided();
+        state.stops = state.parsedImportStops.map((s) => ({
+          id: s.id,
+          name: s.name,
+          lat: s.lat,
+          lon: s.lon,
+          vehicle: s.vehicle,
+          model: s.model,
+          pauseSec: Number(s.pauseSec) || 4,
+          photos: [],
+          photoCaption: ""
+        }));
+        state.activeVehicle = state.stops[0].vehicle || "automobile";
+        state.activeModel = state.stops[0].model || getCategoryObj(state.activeVehicle).models[0].id;
+        state.progress = 0;
+        state.elapsedSec = 0;
+        state.arrivalZoomBoost = 0;
+        state.triggeredArrivalStopIds.clear();
+        state.followCamera = true;
+        state.playing = true;
+        renderVehicleDock();
+        renderModelDock();
+        renderStopsDrawer();
+        renderSavedItinerariesList();
+        switchDrawerTab("stops");
+        showToast(`Caricate ${state.stops.length} tappe in "${state.itineraryTitle}"`, "✅");
+      });
+
+      dom.appendItineraryBtn.addEventListener("click", () => {
+        if (!state.parsedImportStops.length) return;
+        applyImportedTitleIfProvided();
+        state.parsedImportStops.forEach((s) => {
+          state.stops.push({
+            id: `${s.id}_${Math.random().toString(36).slice(2, 5)}`,
+            name: s.name,
+            lat: s.lat,
+            lon: s.lon,
+            vehicle: s.vehicle,
+            model: s.model,
+            pauseSec: Number(s.pauseSec) || 4,
+            photos: [],
+            photoCaption: ""
+          });
+        });
+        renderStopsDrawer();
+        switchDrawerTab("stops");
+        showToast(`Aggiunte ${state.parsedImportStops.length} tappe in coda`, "➕");
+      });
+
+      dom.canvas.addEventListener("pointerdown", (e) => {
+        if (state.pickMode) {
+          const geo = screenToLatLon(e.clientX, e.clientY, state.viewportWidth, state.viewportHeight, getEffectiveZoom());
+          addStop(`Punto ${state.stops.length + 1}`, geo.lat, geo.lon);
+          state.pickMode = false;
+          dom.canvas.classList.remove("pick-mode");
+          dom.mapPickHint.classList.add("hidden");
+          return;
+        }
+        state.dragging = true;
+        state.followCamera = false;
+        state.dragStartX = e.clientX;
+        state.dragStartY = e.clientY;
+        state.dragStartLat = state.centerLat;
+        state.dragStartLon = state.centerLon;
+        dom.canvas.classList.add("dragging");
+        dom.canvas.setPointerCapture(e.pointerId);
+      });
+
+      dom.canvas.addEventListener("pointermove", (e) => {
+        const z = getEffectiveZoom();
+        if (state.dragging) {
+          const dx = e.clientX - state.dragStartX;
+          const dy = e.clientY - state.dragStartY;
+          const sw = latLonToWorldPx(state.dragStartLat, state.dragStartLon, z);
+          const next = worldPxToLatLon(sw.x - dx, sw.y - dy, z);
+          state.centerLat = next.lat;
+          state.centerLon = next.lon;
+          return;
+        }
+
+        let found = null;
+        for (const stop of state.stops) {
+          const pt = latLonToScreen(stop.lat, stop.lon, state.viewportWidth, state.viewportHeight, z);
+          if (Math.hypot(pt.x - e.clientX, pt.y - e.clientY) < 16) {
+            found = stop;
+            break;
+          }
+        }
+        if (found) {
+          const pInfo = found.photos && found.photos.length ? ` · 📷 ${found.photos.length} foto` : "";
+          dom.hoverTooltip.textContent = `${found.name} (${found.lat.toFixed(3)}, ${found.lon.toFixed(3)})${pInfo}`;
+          dom.hoverTooltip.style.left = `${e.clientX + 14}px`;
+          dom.hoverTooltip.style.top = `${e.clientY + 14}px`;
+          dom.hoverTooltip.classList.remove("hidden");
+        } else {
+          dom.hoverTooltip.classList.add("hidden");
+        }
+      });
+
+      function stopCanvasDrag() {
+        state.dragging = false;
+        dom.canvas.classList.remove("dragging");
+      }
+
+      dom.canvas.addEventListener("pointerup", stopCanvasDrag);
+      dom.canvas.addEventListener("pointercancel", stopCanvasDrag);
+
+      dom.canvas.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          const step = e.deltaY < 0 ? 0.95 : -0.95;
+          state.manualZoomOffset = clamp(state.manualZoomOffset + step, -10, 14);
+        },
+        { passive: false }
+      );
+
+      window.addEventListener("resize", resizeCanvas);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", syncViewportAndDrawerLayout);
+        window.visualViewport.addEventListener("scroll", syncViewportAndDrawerLayout);
+      }
+      if (typeof ResizeObserver !== "undefined" && dom.appRoot) {
+        const ro = new ResizeObserver(() => resizeCanvas());
+        ro.observe(dom.appRoot);
+      }
+
+      function initApplication() {
+        resizeCanvas();
+        state.savedItineraries = loadSavedItinerariesFromStorage();
+        setItineraryTitle(state.itineraryTitle);
+        renderVehicleDock();
+        renderModelDock();
+        renderStopsDrawer();
+        renderSavedItinerariesList();
+        if (state.stops[0]) {
+          state.centerLat = state.stops[0].lat;
+          state.centerLon = state.stops[0].lon;
+        }
+        const initialRoute = evaluateRouteAt(state.progress);
+        if (state.followCamera) {
+          lockCameraToCursor(initialRoute);
+        }
+        const z0 = getEffectiveZoom();
+        renderSceneFrame(state.viewportWidth, state.viewportHeight, z0, initialRoute);
+        updateHud(initialRoute);
+        requestAnimationFrame(animate);
+      }
+
+      if (document.readyState === "loading") {
+        window.addEventListener("DOMContentLoaded", initApplication);
+      } else {
+        initApplication();
+      }
+    })();
+  </script>
+</body>
+</html>
